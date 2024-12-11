@@ -1,0 +1,16 @@
+[package]
+name = "wg_2024_rust_group"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+env_logger = "0.11.5"
+anyhow = "1.0.94"
+crossbeam = "0.8.4"
+log = "0.4.22"
+rand = "0.8.5"
+toml = "0.8.19"
+wg_2024 = { git = "https://github.com/WGL-2024/WGL_repo_2024.git", features = [
+    "serialize",
+] }
+wg_2024-rust = { git = "https://github.com/LuigiMiazzo17/unitn-advancedProgramming-WGL_2024-drone.git" }

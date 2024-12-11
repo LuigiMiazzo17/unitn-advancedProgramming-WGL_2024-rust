@@ -1,0 +1,25 @@
+mod network_initializer;
+mod simulation_controller;
+
+use crate::network_initializer::{parse_config, spawn_network};
+use crate::simulation_controller::SimulationController;
+
+fn main() -> anyhow::Result<()> {
+    env_logger::init();
+
+    let config = parse_config("examples/config/base.toml")?;
+
+    let (controller_drones, node_event_recv, mut handles) = spawn_network(config)?;
+
+    let mut controller = SimulationController {
+        drones: controller_drones,
+        node_event_recv,
+    };
+    controller.crash_all()?;
+
+    while let Some(handle) = handles.pop() {
+        let _ = handle.join();
+    }
+
+    Ok(())
+}
