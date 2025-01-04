@@ -1,3 +1,3 @@
-mod simulation_controller;
+mod main;
 
-pub use simulation_controller::*;
+pub use main::*;

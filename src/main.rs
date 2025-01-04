@@ -1,8 +1,5 @@
-mod network_initializer;
-mod simulation_controller;
-
-use crate::network_initializer::{parse_config, spawn_network};
-use crate::simulation_controller::SimulationController;
+use wg_2024_rust_group::network_initializer::{parse_config, spawn_network};
+use wg_2024_rust_group::simulation_controller::SimulationController;
 
 fn main() -> anyhow::Result<()> {
     env_logger::init();
