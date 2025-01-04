@@ -432,6 +432,7 @@ dependencies = [
  "env_logger",
  "log",
  "rand",
+ "serde",
  "toml",
  "wg_2024",
  "wg_2024-rust",
