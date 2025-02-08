@@ -1,3 +1,5 @@
+use wg_2024::network::NodeId;
+
 use crate::network::message::Message;
 use crate::network::NodeTrait;
 use crate::server::communication_server::CommunicationServer;
@@ -17,10 +19,10 @@ pub struct Server {
 }
 
 impl Server {
-    pub fn handle_message(&self, message: Message) {
+    pub fn handle_message(&self, peer_id: NodeId, message: Message) -> Option<Message> {
         match &self.server_type {
-            ServerType::Communication(server) => server.handle_message(message),
-            ServerType::Content(server) => server.handle_message(message),
+            ServerType::Communication(server) => server.handle_message(peer_id, message),
+            ServerType::Content(server) => server.handle_message(peer_id, message),
         }
     }
 }

@@ -1,6 +1,6 @@
 use wg_2024::network::NodeId;
 
-use crate::network::message::Message;
+use crate::network::message::{Message, ServerTypeMessage};
 use crate::network::NodeTrait;
 use crate::server::ServerTrait;
 
@@ -13,26 +13,19 @@ impl ServerTrait for ContentServer {
 }
 
 impl NodeTrait for ContentServer {
-    fn handle_message(&self, message: Message) {
+    fn handle_message(&self, peer_id: NodeId, message: Message) -> Option<Message> {
         match message {
-            Message::ServerTypeRequest => {
-                let response = self.handle_server_type_request();
-                self.send_message(0, response);
-            }
+            Message::ServerTypeRequest => Some(self.handle_server_type_request()),
             _ => {
                 // Unsupported message type
                 todo!()
             }
         }
     }
-
-    fn send_message(&self, recipient: NodeId, message: Message) {
-        // Send the message
-    }
 }
 
 impl ContentServer {
     pub fn handle_server_type_request(&self) -> Message {
-        Message::ServerTypeResponse("Content".to_string())
+        Message::ServerTypeResponse(ServerTypeMessage::Content)
     }
 }
