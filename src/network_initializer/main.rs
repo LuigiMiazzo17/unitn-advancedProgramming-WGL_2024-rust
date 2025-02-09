@@ -6,11 +6,10 @@ use std::thread;
 
 use crate::network::NodeCommand;
 use crate::network::{Node, NodeType};
-use crate::server::{ContentServer, Server, ServerType};
+use crate::network_initializer::config::Config;
 
 use wg_2024_rust::drone::RustDrone;
 
-use wg_2024::config::Config;
 use wg_2024::controller::{DroneCommand, DroneEvent};
 use wg_2024::drone::Drone;
 use wg_2024::network::NodeId;
@@ -91,12 +90,22 @@ pub fn spawn_network(
             thread::Builder::new()
                 .name(format!("server{}", server.id))
                 .spawn(move || {
-                    let mut server = Node::new(
-                        server.id,
-                        NodeType::Server(Server::new(ServerType::Content(ContentServer {}))),
-                        controller_server_recv,
-                        packet_recv,
-                    );
+                    let mut server = if server.server_type == "Content" {
+                        Node::new_content_server(
+                            server.id,
+                            controller_server_recv,
+                            packet_recv,
+                            server.base_path,
+                        )
+                    } else if server.server_type == "Communication" {
+                        Node::new_communication_server(
+                            server.id,
+                            controller_server_recv,
+                            packet_recv,
+                        )
+                    } else {
+                        panic!("Unknown server type: {}", server.server_type);
+                    };
 
                     server.run();
                 })?,

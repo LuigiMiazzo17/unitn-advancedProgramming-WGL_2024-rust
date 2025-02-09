@@ -14,12 +14,12 @@ use crate::network::message::Message;
 use crate::network::message_constructor::MessageConstructor;
 use crate::network::network_discovery_protocol::parse_network_from_flood_responses;
 use crate::network::packet_sender::PacketSender;
-use crate::server::Server;
+use crate::server::{CommunicationServer, ContentServer, Server, ServerType};
 
 const MAX_WAIT_FLOOD_RESPONSE: Duration = Duration::from_millis(200);
 
 pub trait NodeTrait {
-    fn handle_message(&self, peer_id: NodeId, message: Message) -> Option<Message>;
+    fn handle_message(&mut self, peer_id: NodeId, message: Message) -> Option<Message>;
 }
 
 pub enum NodeType {
@@ -52,7 +52,7 @@ pub struct Node {
 }
 
 impl Node {
-    pub fn new(
+    fn new(
         id: NodeId,
         node_type: NodeType,
         command_recv: Receiver<NodeCommand>,
@@ -73,6 +73,37 @@ impl Node {
             network_discovery_responses: Default::default(),
             last_network_discovery_id: 0,
         }
+    }
+
+    pub fn new_content_server(
+        id: NodeId,
+        command_recv: Receiver<NodeCommand>,
+        packet_recv: Receiver<Packet>,
+        base_path: String,
+    ) -> Self {
+        Self::new(
+            id,
+            NodeType::Server(Server::new(ServerType::Content(ContentServer::new(
+                id, base_path,
+            )))),
+            command_recv,
+            packet_recv,
+        )
+    }
+
+    pub fn new_communication_server(
+        id: NodeId,
+        command_recv: Receiver<NodeCommand>,
+        packet_recv: Receiver<Packet>,
+    ) -> Self {
+        Self::new(
+            id,
+            NodeType::Server(Server::new(ServerType::Communication(
+                CommunicationServer::new(),
+            ))),
+            command_recv,
+            packet_recv,
+        )
     }
 
     pub fn id(&self) -> NodeId {
@@ -304,7 +335,7 @@ impl Node {
 
     fn handle_data_message(&mut self, peer_id: NodeId, message: Message) {
         // Handle High-level message
-        if let Some(response) = match &self.node_type {
+        if let Some(response) = match &mut self.node_type {
             NodeType::Server(server) => server.handle_message(peer_id, message),
         } {
             self.send_data_message(peer_id, response);

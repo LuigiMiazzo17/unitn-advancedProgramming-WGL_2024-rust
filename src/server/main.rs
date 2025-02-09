@@ -5,11 +5,6 @@ use crate::network::NodeTrait;
 pub use crate::server::communication_server::CommunicationServer;
 pub use crate::server::content_server::ContentServer;
 
-pub trait ServerTrait {
-    fn new() -> Self;
-}
-
-#[derive(Debug)]
 pub enum ServerType {
     Communication(CommunicationServer),
     Content(ContentServer),
@@ -20,8 +15,8 @@ pub struct Server {
 }
 
 impl Server {
-    pub fn handle_message(&self, peer_id: NodeId, message: Message) -> Option<Message> {
-        match &self.server_type {
+    pub fn handle_message(&mut self, peer_id: NodeId, message: Message) -> Option<Message> {
+        match &mut self.server_type {
             ServerType::Communication(server) => server.handle_message(peer_id, message),
             ServerType::Content(server) => server.handle_message(peer_id, message),
         }

@@ -6,12 +6,14 @@ pdr = 0.0
 [[server]]
 id = 10
 connected_drone_ids = [1]
-type = "Communication"
+server_type = "Content"
+base_path = "/tmp/rust"
 
 [[server]]
 id = 20
 connected_drone_ids = [1]
-type = "Content"
+server_type = "Content"
+base_path = "/tmp/rust"
 
 [[client]]
 id = 200

@@ -1,7 +1,7 @@
 use std::thread;
 use std::time::Duration;
 
-use wg_2024_rust_group::network::message::{Message, RequestMessage};
+use wg_2024_rust_group::network::message::{Message, Request};
 use wg_2024_rust_group::network::NodeCommand;
 use wg_2024_rust_group::network_initializer::{parse_config, spawn_network};
 use wg_2024_rust_group::simulation_controller::SimulationController;
@@ -26,7 +26,7 @@ fn main() -> anyhow::Result<()> {
         .unwrap()
         .send(NodeCommand::SendMessage((
             20,
-            Message::Request(RequestMessage::ServerType),
+            Message::Request(Request::WriteFile("file2".to_string(), "ciaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaduhapjfbewphbgerpauhorbfhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhho".to_string())),
         )))?;
 
     thread::sleep(Duration::from_secs(1));
