@@ -4,8 +4,8 @@ use std::collections::HashMap;
 use std::fs;
 use std::thread;
 
+use crate::network::Node;
 use crate::network::NodeCommand;
-use crate::network::{Node, NodeType};
 use crate::network_initializer::config::Config;
 
 use wg_2024_rust::drone::RustDrone;

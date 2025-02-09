@@ -57,6 +57,10 @@ impl NodeTrait for CommunicationServer {
             fs::write(path, chat).unwrap();
         }
     }
+
+    fn get_node_type(&self) -> wg_2024::packet::NodeType {
+        wg_2024::packet::NodeType::Server
+    }
 }
 
 impl CommunicationServer {

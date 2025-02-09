@@ -14,18 +14,14 @@ use crate::network::message::Message;
 use crate::network::message_constructor::MessageConstructor;
 use crate::network::network_discovery_protocol::parse_network_from_flood_responses;
 use crate::network::packet_sender::PacketSender;
-use crate::server::{CommunicationServer, ContentServer, Server, ServerType};
+use crate::server::{CommunicationServer, ContentServer};
 
 const MAX_WAIT_FLOOD_RESPONSE: Duration = Duration::from_millis(50);
 
 pub trait NodeTrait {
     fn handle_message(&mut self, peer_id: NodeId, message: Message) -> Option<Message>;
     fn stop(&mut self);
-}
-
-pub enum NodeType {
-    Server(Server),
-    // Client, /*(Client)*/
+    fn get_node_type(&self) -> FloodNodeType;
 }
 
 #[derive(Debug)]
@@ -38,7 +34,7 @@ pub enum NodeCommand {
 
 pub struct Node {
     id: NodeId,
-    node_type: NodeType,
+    node_type: Box<dyn NodeTrait>,
     packet_recv: Receiver<Packet>,
     command_recv: Receiver<NodeCommand>,
     neighbors: Arc<Mutex<HashMap<NodeId, Sender<Packet>>>>,
@@ -46,16 +42,16 @@ pub struct Node {
     fragment_constructor_store: HashMap<(NodeId, u64), MessageConstructor>,
     packet_send: Option<Sender<(NodeId, u64, PacketType)>>,
     acked_packets_send: Option<Sender<(NodeId, u64, u64)>>,
+    network_discovery_last_id: u64,
     network_discovery_ongoing: Arc<AtomicBool>,
-    network_discovery_start_time: Instant,
     network_discovery_responses: Vec<FloodResponse>,
-    last_network_discovery_id: u64,
+    network_discovery_start_time: Instant,
 }
 
 impl Node {
     fn new(
         id: NodeId,
-        node_type: NodeType,
+        node_type: Box<dyn NodeTrait>,
         command_recv: Receiver<NodeCommand>,
         packet_recv: Receiver<Packet>,
     ) -> Self {
@@ -72,7 +68,7 @@ impl Node {
             network_discovery_ongoing: Arc::new(AtomicBool::new(false)),
             network_discovery_start_time: Instant::now(),
             network_discovery_responses: Default::default(),
-            last_network_discovery_id: 0,
+            network_discovery_last_id: 0,
         }
     }
 
@@ -84,9 +80,7 @@ impl Node {
     ) -> Self {
         Self::new(
             id,
-            NodeType::Server(Server::new(ServerType::Content(ContentServer::new(
-                id, base_path,
-            )))),
+            Box::new(ContentServer::new(id, base_path)),
             command_recv,
             packet_recv,
         )
@@ -100,9 +94,7 @@ impl Node {
     ) -> Self {
         Self::new(
             id,
-            NodeType::Server(Server::new(ServerType::Communication(
-                CommunicationServer::new(id, base_path),
-            ))),
+            Box::new(CommunicationServer::new(id, base_path)),
             command_recv,
             packet_recv,
         )
@@ -110,10 +102,6 @@ impl Node {
 
     pub fn id(&self) -> NodeId {
         self.id
-    }
-
-    pub fn node_type(&self) -> &NodeType {
-        &self.node_type
     }
 
     pub fn run(&mut self) {
@@ -182,9 +170,7 @@ impl Node {
                     match command {
                         Ok(message) => match message {
                             NodeCommand::Quit => {
-                                if let NodeType::Server(server) = &mut self.node_type {
-                                    server.stop();
-                                }
+                                self.node_type.stop();
                                 break;
                     },
                             NodeCommand::AddNeighboor((neighboor_id, sender)) => {
@@ -239,7 +225,7 @@ impl Node {
                 self.handle_flood_request(flood_request, packet.session_id);
             }
             PacketType::FloodResponse(flood_responses) => {
-                if flood_responses.flood_id == self.last_network_discovery_id {
+                if flood_responses.flood_id == self.network_discovery_last_id {
                     self.network_discovery_responses.push(flood_responses);
                 }
             }
@@ -251,13 +237,7 @@ impl Node {
         // Handle Flood Request
         let mut path_trace = flood_request.path_trace;
 
-        path_trace.push((
-            self.id,
-            match self.node_type {
-                NodeType::Server(_) => FloodNodeType::Server,
-                // NodeType::Client/*(_)*/ => FloodNodeType::Client,
-            },
-        ));
+        path_trace.push((self.id, self.node_type.get_node_type()));
 
         let flood_response = FloodResponse {
             flood_id: flood_request.flood_id,
@@ -277,16 +257,13 @@ impl Node {
 
     fn trigger_network_discovery(&mut self) {
         self.network_discovery_responses.clear();
-        self.last_network_discovery_id = rand::random();
+        self.network_discovery_last_id = rand::random();
 
         // Trigger Flood Request
         let flood_request = FloodRequest::initialize(
-            self.last_network_discovery_id,
+            self.network_discovery_last_id,
             self.id,
-            match self.node_type {
-                NodeType::Server(_) => FloodNodeType::Server,
-                // NodeType::Client/*(_)*/ => FloodNodeType::Client,
-            },
+            self.node_type.get_node_type(),
         );
 
         self.packet_send
@@ -342,9 +319,7 @@ impl Node {
 
     fn handle_data_message(&mut self, peer_id: NodeId, message: Message) {
         // Handle High-level message
-        if let Some(response) = match &mut self.node_type {
-            NodeType::Server(server) => server.handle_message(peer_id, message),
-        } {
+        if let Some(response) = self.node_type.handle_message(peer_id, message) {
             self.send_data_message(peer_id, response);
         }
     }
