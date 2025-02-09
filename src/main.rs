@@ -21,12 +21,20 @@ fn main() -> anyhow::Result<()> {
 
     thread::sleep(Duration::from_secs(1));
 
+    // controller_server
+    //     .get(&10)
+    //     .unwrap()
+    //     .send(NodeCommand::SendMessage((
+    //         20,
+    //         Message::Request(Request::WritePublicFile("file2".to_string(), "ciaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaduhapjfbewphbgerpauhorbfhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhho".to_string())),
+    //     )))?;
+
     controller_server
         .get(&10)
         .unwrap()
         .send(NodeCommand::SendMessage((
             20,
-            Message::Request(Request::WriteFile("file2".to_string(), "ciaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaduhapjfbewphbgerpauhorbfhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhho".to_string())),
+            Message::Request(Request::GetPrivateFile("cia2o".to_string())),
         )))?;
 
     thread::sleep(Duration::from_secs(1));

@@ -16,9 +16,12 @@ pub enum Request {
     CreateChat(String),
     DeleteChat(u64),
     GetMessages(u64),
-    ListFiles,
-    GetFile(String),
-    WriteFile(String, String),
+    ListPublicFiles,
+    GetPublicFile(String),
+    WritePublicFile(String, String),
+    ListPrivateFiles,
+    GetPrivateFile(String),
+    WritePrivateFile(String, String),
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -29,6 +32,7 @@ pub enum Response {
     Messages(Vec<ChatMessage>),
     Files(Vec<String>),
     File(String),
+    NoSuchFile,
     NotImplemented,
 }
 

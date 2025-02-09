@@ -16,13 +16,22 @@ impl NodeTrait for ContentServer {
         match message {
             Message::Request(request) => match request {
                 Request::ServerType => Some(Message::Response(self.handle_server_type_request())),
-                Request::ListFiles => Some(Message::Response(self.get_files())),
-                Request::GetFile(file_name) => {
-                    let data = self.get_file(&file_name);
-                    Some(Message::Response(Response::File(data)))
+                Request::ListPublicFiles => Some(Message::Response(self.list_public_files())),
+                Request::ListPrivateFiles => {
+                    Some(Message::Response(self.list_private_files(_peer_id)))
                 }
-                Request::WriteFile(file_name, data) => {
-                    self.write_file(&file_name, &data);
+                Request::GetPublicFile(file_name) => {
+                    Some(Message::Response(self.get_public_file(&file_name)))
+                }
+                Request::GetPrivateFile(file_name) => Some(Message::Response(
+                    self.get_private_file(&file_name, _peer_id),
+                )),
+                Request::WritePublicFile(file_name, data) => {
+                    self.write_public_file(&file_name, &data);
+                    None
+                }
+                Request::WritePrivateFile(file_name, data) => {
+                    self.write_private_file(&file_name, &data, _peer_id);
                     None
                 }
                 _ => Some(Message::Response(Response::NotImplemented)),
@@ -54,32 +63,77 @@ impl ContentServer {
         Response::ServerType(ServerType::Content)
     }
 
-    fn get_files(&self) -> Response {
-        let files = fs::read_dir(&self.base_path)
-            .expect("Failed to read directory")
-            .map(|entry| {
-                entry
-                    .expect("Failed to read entry")
-                    .file_name()
-                    .into_string()
-                    .expect("Failed to convert OsString to String")
-            })
-            .collect();
-
-        Response::Files(files)
+    fn get_public_dir(&self) -> PathBuf {
+        self.base_path.join("public")
     }
 
-    fn get_file(&self, file_name: &str) -> String {
-        if file_name.contains("..") {
-            return String::new();
+    fn get_private_dir(&self, peer_id: NodeId) -> PathBuf {
+        self.base_path.join(peer_id.to_string())
+    }
+
+    fn list_public_files(&self) -> Response {
+        Self::list_files(&self.get_public_dir())
+    }
+
+    fn list_private_files(&self, peer_id: NodeId) -> Response {
+        Self::list_files(&self.get_private_dir(peer_id))
+    }
+
+    fn list_files(path: &PathBuf) -> Response {
+        match fs::read_dir(path) {
+            Ok(files) => Response::Files(
+                files
+                    .into_iter()
+                    .filter_map(|entry| {
+                        entry
+                            .ok()
+                            .and_then(|e| e.file_name().into_string().ok().map(|s| s.to_string()))
+                    })
+                    .collect(),
+            ),
+            Err(_) => {
+                fs::create_dir_all(path).expect("Failed to create directory");
+                Response::Files(Vec::new())
+            }
         }
-        fs::read_to_string(self.base_path.join(file_name)).expect("Failed to read file")
     }
 
-    fn write_file(&self, file_name: &str, data: &str) {
+    fn get_public_file(&self, file_name: &str) -> Response {
+        if file_name.contains("..") {
+            return Response::NoSuchFile;
+        }
+        Self::get_file(&self.get_public_dir().join(file_name))
+    }
+
+    fn get_private_file(&self, file_name: &str, peer_id: NodeId) -> Response {
+        if file_name.contains("..") {
+            return Response::NoSuchFile;
+        }
+        Self::get_file(&self.get_private_dir(peer_id).join(file_name))
+    }
+
+    fn get_file(path: &PathBuf) -> Response {
+        match fs::read_to_string(path) {
+            Ok(data) => Response::File(data),
+            Err(_) => Response::NoSuchFile,
+        }
+    }
+
+    fn write_public_file(&self, file_name: &str, data: &str) {
         if file_name.contains("..") {
             return;
         }
-        fs::write(self.base_path.join(file_name), data).expect("Failed to write file");
+        Self::write_file(&self.get_public_dir().join(file_name), data);
+    }
+
+    fn write_private_file(&self, file_name: &str, data: &str, peer_id: NodeId) {
+        if file_name.contains("..") {
+            return;
+        }
+        Self::write_file(&self.get_private_dir(peer_id).join(file_name), data);
+    }
+
+    fn write_file(path: &PathBuf, data: &str) {
+        fs::write(path, data).expect("Failed to write file");
     }
 }
