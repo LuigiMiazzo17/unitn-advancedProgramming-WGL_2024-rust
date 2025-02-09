@@ -25,4 +25,11 @@ impl Server {
     pub fn new(server_type: ServerType) -> Self {
         Server { server_type }
     }
+
+    pub fn stop(&mut self) {
+        match &mut self.server_type {
+            ServerType::Communication(server) => server.stop(),
+            ServerType::Content(server) => server.stop(),
+        }
+    }
 }

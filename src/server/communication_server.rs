@@ -1,26 +1,23 @@
-use chrono::{DateTime, Utc};
+use chrono::Utc;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::fs;
+use std::path::PathBuf;
 
 use wg_2024::network::NodeId;
 
-use crate::network::message::{
-    ChatMessage as ChatMessageResponse, ChatResponse, Message, Request, Response, ServerType,
-};
+use crate::network::message::{ChatMessage, ChatResponse, Message, Request, Response, ServerType};
 use crate::network::NodeTrait;
 
 pub struct CommunicationServer {
     chats: HashMap<u64, Chat>,
+    base_path: PathBuf,
 }
 
+#[derive(Serialize, Deserialize)]
 struct Chat {
     name: String,
     messages: Vec<ChatMessage>,
-}
-
-struct ChatMessage {
-    author: NodeId,
-    message: String,
-    timestamp: DateTime<Utc>,
 }
 
 impl NodeTrait for CommunicationServer {
@@ -52,14 +49,43 @@ impl NodeTrait for CommunicationServer {
             }
         }
     }
+
+    fn stop(&mut self) {
+        for (chat_id, chat) in &self.chats {
+            let path = self.base_path.join(chat_id.to_string());
+            let chat = serde_json::to_string(chat).unwrap();
+            fs::write(path, chat).unwrap();
+        }
+    }
 }
 
 impl CommunicationServer {
-    pub fn new() -> Self {
+    pub fn new(node_id: NodeId, base_path: String) -> Self {
+        let path = PathBuf::new()
+            .join(base_path)
+            .join(node_id.to_string())
+            .join("communication");
+        let mut chats = HashMap::new();
+
+        if !path.exists() {
+            fs::create_dir_all(&path).unwrap();
+        }
+
+        for entry in fs::read_dir(&path).unwrap() {
+            let entry = entry.unwrap();
+            let path = entry.path();
+            let chat_id = path.file_name().unwrap().to_str().unwrap().parse().unwrap();
+            let chat = fs::read_to_string(&path).unwrap();
+            let chat: Chat = serde_json::from_str(&chat).expect("Failed to parse chat");
+            chats.insert(chat_id, chat);
+        }
+
         CommunicationServer {
-            chats: Default::default(),
+            chats,
+            base_path: path,
         }
     }
+
     fn handle_server_type_request(&self) -> Response {
         Response::ServerType(ServerType::Communication)
     }
@@ -81,7 +107,7 @@ impl CommunicationServer {
         chat.messages.push(ChatMessage {
             author,
             message,
-            timestamp: Utc::now(),
+            timestamp: Utc::now().to_rfc3339(),
         });
     }
 
@@ -101,6 +127,7 @@ impl CommunicationServer {
 
     fn delete_chat(&mut self, chat_id: u64) {
         self.chats.remove(&chat_id);
+        fs::remove_file(self.base_path.join(chat_id.to_string())).unwrap();
     }
 
     fn get_chat_messages(&self, chat_id: u64) -> Response {
@@ -108,10 +135,10 @@ impl CommunicationServer {
         let messages = chat
             .messages
             .iter()
-            .map(|message| ChatMessageResponse {
+            .map(|message| ChatMessage {
                 author: message.author,
                 message: message.message.clone(),
-                timestamp: message.timestamp.to_rfc3339(),
+                timestamp: message.timestamp.clone(),
             })
             .collect();
         Response::Messages(messages)

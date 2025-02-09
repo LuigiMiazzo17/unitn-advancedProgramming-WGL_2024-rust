@@ -12,7 +12,7 @@ base_path = "/tmp/rust"
 [[server]]
 id = 20
 connected_drone_ids = [1]
-server_type = "Content"
+server_type = "Communication"
 base_path = "/tmp/rust"
 
 [[client]]

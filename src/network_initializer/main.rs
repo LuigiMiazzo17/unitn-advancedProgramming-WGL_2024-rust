@@ -102,6 +102,7 @@ pub fn spawn_network(
                             server.id,
                             controller_server_recv,
                             packet_recv,
+                            server.base_path,
                         )
                     } else {
                         panic!("Unknown server type: {}", server.server_type);

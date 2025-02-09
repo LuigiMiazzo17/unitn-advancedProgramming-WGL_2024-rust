@@ -43,20 +43,22 @@ impl NodeTrait for ContentServer {
             }
         }
     }
+
+    fn stop(&mut self) {}
 }
 
 impl ContentServer {
     pub fn new(node_id: NodeId, base_path: String) -> Self {
-        let path = PathBuf::new().join(base_path);
-        if !path.is_dir() {
-            panic!("Path is not a directory: {:?}", path);
+        let path = PathBuf::new()
+            .join(base_path)
+            .join(node_id.to_string())
+            .join("content");
+
+        if !path.exists() {
+            fs::create_dir_all(&path).unwrap();
         }
 
-        let base_path = path.join(node_id.to_string());
-
-        fs::create_dir_all(&base_path).expect("Failed to create directory");
-
-        ContentServer { base_path }
+        ContentServer { base_path: path }
     }
 
     fn handle_server_type_request(&self) -> Response {

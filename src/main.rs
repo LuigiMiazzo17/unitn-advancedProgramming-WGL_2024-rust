@@ -34,16 +34,12 @@ fn main() -> anyhow::Result<()> {
         .unwrap()
         .send(NodeCommand::SendMessage((
             20,
-            Message::Request(Request::GetPrivateFile("cia2o".to_string())),
+            Message::Request(Request::DeleteChat(6852741936126412825)),
         )))?;
 
     thread::sleep(Duration::from_secs(1));
 
     controller.crash_all()?;
-
-    while let Some(handle) = d_handles.pop() {
-        let _ = handle.join();
-    }
 
     for c in controller_server.iter() {
         c.1.send(NodeCommand::Quit)?;

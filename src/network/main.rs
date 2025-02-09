@@ -16,10 +16,11 @@ use crate::network::network_discovery_protocol::parse_network_from_flood_respons
 use crate::network::packet_sender::PacketSender;
 use crate::server::{CommunicationServer, ContentServer, Server, ServerType};
 
-const MAX_WAIT_FLOOD_RESPONSE: Duration = Duration::from_millis(200);
+const MAX_WAIT_FLOOD_RESPONSE: Duration = Duration::from_millis(50);
 
 pub trait NodeTrait {
     fn handle_message(&mut self, peer_id: NodeId, message: Message) -> Option<Message>;
+    fn stop(&mut self);
 }
 
 pub enum NodeType {
@@ -95,11 +96,12 @@ impl Node {
         id: NodeId,
         command_recv: Receiver<NodeCommand>,
         packet_recv: Receiver<Packet>,
+        base_path: String,
     ) -> Self {
         Self::new(
             id,
             NodeType::Server(Server::new(ServerType::Communication(
-                CommunicationServer::new(),
+                CommunicationServer::new(id, base_path),
             ))),
             command_recv,
             packet_recv,
@@ -179,7 +181,12 @@ impl Node {
                 recv(self.command_recv) -> command => {
                     match command {
                         Ok(message) => match message {
-                            NodeCommand::Quit => break,
+                            NodeCommand::Quit => {
+                                if let NodeType::Server(server) = &mut self.node_type {
+                                    server.stop();
+                                }
+                                break;
+                    },
                             NodeCommand::AddNeighboor((neighboor_id, sender)) => {
                                 self.neighbors.lock().expect("Failed to lock neighboors map").insert(neighboor_id, sender);
                                 self.trigger_network_discovery();
