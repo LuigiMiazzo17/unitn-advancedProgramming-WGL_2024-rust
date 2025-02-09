@@ -1,12 +1,22 @@
 use serde::{Deserialize, Serialize};
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 pub enum Message {
-    ServerTypeRequest,
-    ServerTypeResponse(ServerTypeMessage),
+    Request(RequestMessage),
+    Response(ResponseMessage),
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
+pub enum RequestMessage {
+    ServerType,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub enum ResponseMessage {
+    ServerType(ServerTypeMessage),
+}
+
+#[derive(Serialize, Deserialize, Debug)]
 pub enum ServerTypeMessage {
     Communication,
     Content,

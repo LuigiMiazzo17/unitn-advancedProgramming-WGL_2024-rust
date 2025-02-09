@@ -2,14 +2,15 @@ use wg_2024::network::NodeId;
 
 use crate::network::message::Message;
 use crate::network::NodeTrait;
-use crate::server::communication_server::CommunicationServer;
-use crate::server::content_server::ContentServer;
+pub use crate::server::communication_server::CommunicationServer;
+pub use crate::server::content_server::ContentServer;
 
 pub trait ServerTrait {
     fn new() -> Self;
 }
 
-enum ServerType {
+#[derive(Debug)]
+pub enum ServerType {
     Communication(CommunicationServer),
     Content(ContentServer),
 }
@@ -24,5 +25,9 @@ impl Server {
             ServerType::Communication(server) => server.handle_message(peer_id, message),
             ServerType::Content(server) => server.handle_message(peer_id, message),
         }
+    }
+
+    pub fn new(server_type: ServerType) -> Self {
+        Server { server_type }
     }
 }

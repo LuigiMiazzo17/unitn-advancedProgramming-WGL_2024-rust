@@ -4,6 +4,10 @@ use std::collections::HashMap;
 use std::fs;
 use std::thread;
 
+use crate::network::NodeCommand;
+use crate::network::{Node, NodeType};
+use crate::server::{ContentServer, Server, ServerType};
+
 use wg_2024_rust::drone::RustDrone;
 
 use wg_2024::config::Config;
@@ -23,11 +27,15 @@ pub fn spawn_network(
     config: Config,
 ) -> anyhow::Result<(
     HashMap<NodeId, Sender<DroneCommand>>,
+    HashMap<NodeId, Sender<NodeCommand>>,
     Receiver<DroneEvent>,
+    Vec<thread::JoinHandle<()>>,
     Vec<thread::JoinHandle<()>>,
 )> {
     let mut controller_drones = HashMap::new();
     let (node_event_send, node_event_recv) = unbounded();
+
+    let mut controller_server = HashMap::new();
 
     let mut packet_channels = HashMap::new();
     for drone in config.drone.iter() {
@@ -40,7 +48,7 @@ pub fn spawn_network(
         packet_channels.insert(server.id, unbounded());
     }
 
-    let mut handles = Vec::new();
+    let mut d_handles = Vec::new();
     for drone in config.drone.into_iter() {
         // controller
         let (controller_drone_send, controller_drone_recv) = unbounded();
@@ -54,7 +62,7 @@ pub fn spawn_network(
             .map(|id| (id, packet_channels[&id].0.clone()))
             .collect();
 
-        handles.push(
+        d_handles.push(
             thread::Builder::new()
                 .name(format!("drone{}", drone.id))
                 .spawn(move || {
@@ -72,5 +80,45 @@ pub fn spawn_network(
         );
     }
 
-    Ok((controller_drones, node_event_recv, handles))
+    let mut s_handles = Vec::new();
+    for server in config.server.into_iter() {
+        // controller
+        let (controller_server_send, controller_server_recv) = unbounded();
+        // packet
+        let packet_recv = packet_channels[&server.id].1.clone();
+
+        s_handles.push(
+            thread::Builder::new()
+                .name(format!("server{}", server.id))
+                .spawn(move || {
+                    let mut server = Node::new(
+                        server.id,
+                        NodeType::Server(Server::new(ServerType::Content(ContentServer {}))),
+                        controller_server_recv,
+                        packet_recv,
+                    );
+
+                    server.run();
+                })?,
+        );
+
+        for connected_id in server.connected_drone_ids.iter() {
+            controller_server_send
+                .send(NodeCommand::AddNeighboor((
+                    *connected_id,
+                    packet_channels[connected_id].0.clone(),
+                )))
+                .unwrap();
+        }
+
+        controller_server.insert(server.id, controller_server_send);
+    }
+
+    Ok((
+        controller_drones,
+        controller_server,
+        node_event_recv,
+        d_handles,
+        s_handles,
+    ))
 }
