@@ -1,4 +1,5 @@
 use chrono::Utc;
+use log::warn;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
@@ -7,7 +8,7 @@ use std::path::PathBuf;
 use wg_2024::network::NodeId;
 
 use crate::network::message::{ChatMessage, ChatResponse, Message, Request, Response, ServerType};
-use crate::network::NodeTrait;
+use crate::network::{Node, NodeTrait, SimControllerMessage};
 
 pub struct CommunicationServer {
     chats: HashMap<u64, Chat>,
@@ -38,9 +39,8 @@ impl NodeTrait for CommunicationServer {
                 Request::GetMessages(chat_id) => Some(self.get_chat_messages(chat_id)),
                 _ => Some(Response::NotImplemented),
             },
-            Message::Response(response) => {
-                // TODO: This is useless
-                println!("Received response: {:?}", response);
+            Message::Response(_) => {
+                warn!("Received response message from peer");
                 None
             }
         }
@@ -60,6 +60,18 @@ impl NodeTrait for CommunicationServer {
 
     fn get_node_type_str(&self) -> &str {
         "CommunicationServer"
+    }
+
+    fn handle_control_message(
+        &mut self,
+        message: SimControllerMessage,
+        send_message_to_peer: &mut dyn FnMut(NodeId, Option<u64>, Message),
+    ) {
+        match message {
+            SimControllerMessage::SendMessageToPeer(peer_id, message) => {
+                send_message_to_peer(peer_id, None, message);
+            }
+        }
     }
 }
 

@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use wg_2024::network::NodeId;
 
 use crate::network::message::{Message, Request, Response, ServerType};
-use crate::network::NodeTrait;
+use crate::network::{Node, NodeTrait, SimControllerMessage};
 
 #[derive(Debug)]
 pub struct ContentServer {
@@ -48,6 +48,18 @@ impl NodeTrait for ContentServer {
 
     fn get_node_type_str(&self) -> &str {
         "ContentServer"
+    }
+
+    fn handle_control_message(
+        &mut self,
+        message: SimControllerMessage,
+        send_message_to_peer: &mut dyn FnMut(NodeId, Option<u64>, Message),
+    ) {
+        match message {
+            SimControllerMessage::SendMessageToPeer(peer_id, message) => {
+                send_message_to_peer(peer_id, None, message);
+            }
+        }
     }
 }
 

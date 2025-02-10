@@ -23,14 +23,22 @@ pub trait NodeTrait {
     fn stop(&mut self);
     fn get_node_type(&self) -> NodeType;
     fn get_node_type_str(&self) -> &str;
+    fn handle_control_message(
+        &mut self,
+        message: SimControllerMessage,
+        send_message_to_peer: &mut dyn FnMut(NodeId, Option<u64>, Message),
+    );
 }
 
-#[derive(Debug)]
+pub enum SimControllerMessage {
+    SendMessageToPeer(NodeId, Message),
+}
+
 pub enum NodeCommand {
     Quit,
     AddNeighbour((NodeId, Sender<Packet>)),
     RemoveNeighbour(NodeId),
-    SendMessage((NodeId, Message)),
+    SendMessage(SimControllerMessage),
 }
 
 pub struct Node {
@@ -107,7 +115,7 @@ impl Node {
         self.packet_send = Some(fragment_send);
 
         // spawn packet sender thread
-        let send_queue_t = thread::Builder::new()
+        let send_queue_t = match thread::Builder::new()
             .name(format!("node-packet-sender-{}", self.id))
             .spawn({
                 let node_id = self.id;
@@ -126,13 +134,23 @@ impl Node {
                     );
                     fragment_sender.run();
                 }
-            })
-            .expect("Failed to spawn node fragment sender thread");
+            }) {
+            Ok(t) => t,
+            Err(e) => {
+                error!(target: &self.log_target, "Failed to spawn packet sender thread: {}", e);
+                return;
+            }
+        };
 
         // Trigger Network Discovery to initialize the network topology
         self.trigger_network_discovery();
 
         loop {
+            if send_queue_t.is_finished() {
+                error!(target: &self.log_target, "Packet sender thread has finished, while node is still running");
+                break;
+            }
+
             let mut timeout = Duration::MAX;
 
             // Check if we should stop network discovery, or we shoud wait for more responses, by
@@ -161,7 +179,7 @@ impl Node {
                             NodeCommand::Quit => {
                                 self.inner_node.stop();
                                 break;
-                    },
+                            },
                             NodeCommand::AddNeighbour((neighbour_id, sender)) => {
                                 self.neighbors.lock().expect("Failed to lock neighbours map").insert(neighbour_id, sender);
                                 self.trigger_network_discovery();
@@ -170,8 +188,18 @@ impl Node {
                                 self.neighbors.lock().expect("Failed to lock packet send").remove(&neighbour_id);
                                 self.trigger_network_discovery();
                             },
-                            NodeCommand::SendMessage((node_id, message)) => {
-                                self.send_data_message(node_id, None, message);
+                            NodeCommand::SendMessage(message) => {
+                                let mut msg_buff = Vec::new();
+
+                                let mut send_message_to_peer = |peer_id: NodeId, session_id: Option<u64>, message| {
+                                    msg_buff.push((peer_id, session_id, message));
+                                };
+
+                                self.inner_node.handle_control_message(message, &mut send_message_to_peer);
+
+                                for (peer_id, session_id, message) in msg_buff {
+                                    self.send_data_message(peer_id, session_id, message);
+                                }
                             },
                         }
                         Err(_) => break,
@@ -339,7 +367,12 @@ impl Node {
         }
     }
 
-    fn send_data_message(&mut self, peer_id: NodeId, session_id: Option<u64>, message: Message) {
+    pub fn send_data_message(
+        &mut self,
+        peer_id: NodeId,
+        session_id: Option<u64>,
+        message: Message,
+    ) {
         let session_id = session_id.unwrap_or(rand::random());
         trace!(target: &self.log_target, "Sending message to peer '{}' with session id '{}'", peer_id, session_id);
 

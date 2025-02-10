@@ -3,6 +3,7 @@ use std::time::Duration;
 
 use wg_2024_rust_group::network::message::{Message, Request};
 use wg_2024_rust_group::network::NodeCommand;
+use wg_2024_rust_group::network::SimControllerMessage;
 use wg_2024_rust_group::network_initializer::{parse_config, spawn_network};
 use wg_2024_rust_group::simulation_controller::SimulationController;
 
@@ -32,10 +33,12 @@ fn main() -> anyhow::Result<()> {
     controller_server
         .get(&10)
         .unwrap()
-        .send(NodeCommand::SendMessage((
-            20,
-            Message::Request(Request::DeleteChat(6852741936126412825)),
-        )))?;
+        .send(NodeCommand::SendMessage(
+            SimControllerMessage::SendMessageToPeer(
+                20,
+                Message::Request(Request::DeleteChat(6852741936126412825)),
+            ),
+        ))?;
 
     thread::sleep(Duration::from_secs(1));
 
