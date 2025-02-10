@@ -6,7 +6,8 @@ use std::time::Duration;
 
 use wg_2024::network::NodeId;
 use wg_2024::packet::{
-    Ack, FloodRequest, FloodResponse, Fragment, NodeType as FloodNodeType, Packet, PacketType,
+    Ack, FloodRequest, FloodResponse, Fragment, Nack, NackType, NodeType as FloodNodeType, Packet,
+    PacketType,
 };
 
 use crate::network::message::Message;
@@ -218,7 +219,14 @@ impl Node {
                     self.net_d.add_response(flood_responses);
                 }
             }
-            _ => todo!(),
+            PacketType::Nack(nack) => match nack.nack_type {
+                NackType::UnexpectedRecipient(_)
+                | NackType::DestinationIsDrone
+                | NackType::ErrorInRouting(_) => {
+                    self.trigger_network_discovery();
+                }
+                _ => {}
+            },
         }
     }
 
