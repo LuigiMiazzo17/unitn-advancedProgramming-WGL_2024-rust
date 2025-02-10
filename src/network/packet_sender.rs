@@ -262,12 +262,12 @@ impl PacketSender {
                 return Some(path);
             }
 
-            if let Some(neighboors) = net_topology.get(&last_node) {
-                for neighboor in neighboors.iter() {
-                    if !visited.contains(neighboor) {
+            if let Some(neighbours) = net_topology.get(&last_node) {
+                for neighbour in neighbours.iter() {
+                    if !visited.contains(neighbour) {
                         let mut new_path = path.clone();
-                        new_path.push(*neighboor);
-                        visited.push(*neighboor);
+                        new_path.push(*neighbour);
+                        visited.push(*neighbour);
                         queue.push(new_path);
                     }
                 }

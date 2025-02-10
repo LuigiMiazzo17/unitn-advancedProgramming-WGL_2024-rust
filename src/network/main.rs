@@ -27,14 +27,14 @@ pub trait NodeTrait {
 #[derive(Debug)]
 pub enum NodeCommand {
     Quit,
-    AddNeighboor((NodeId, Sender<Packet>)),
-    RemoveNeighboor(NodeId),
+    AddNeighbour((NodeId, Sender<Packet>)),
+    RemoveNeighbour(NodeId),
     SendMessage((NodeId, Message)),
 }
 
 pub struct Node {
     id: NodeId,
-    node_type: Box<dyn NodeTrait>,
+    inner_node: Box<dyn NodeTrait>,
     packet_recv: Receiver<Packet>,
     command_recv: Receiver<NodeCommand>,
     neighbors: Arc<Mutex<HashMap<NodeId, Sender<Packet>>>>,
@@ -47,13 +47,13 @@ pub struct Node {
 impl Node {
     fn new(
         id: NodeId,
-        node_type: Box<dyn NodeTrait>,
+        inner_node: Box<dyn NodeTrait>,
         command_recv: Receiver<NodeCommand>,
         packet_recv: Receiver<Packet>,
     ) -> Self {
         Node {
             id,
-            node_type,
+            inner_node,
             packet_recv,
             command_recv,
             neighbors: Default::default(),
@@ -152,15 +152,15 @@ impl Node {
                     match command {
                         Ok(message) => match message {
                             NodeCommand::Quit => {
-                                self.node_type.stop();
+                                self.inner_node.stop();
                                 break;
                     },
-                            NodeCommand::AddNeighboor((neighboor_id, sender)) => {
-                                self.neighbors.lock().expect("Failed to lock neighboors map").insert(neighboor_id, sender);
+                            NodeCommand::AddNeighbour((neighbour_id, sender)) => {
+                                self.neighbors.lock().expect("Failed to lock neighbours map").insert(neighbour_id, sender);
                                 self.trigger_network_discovery();
                             },
-                            NodeCommand::RemoveNeighboor(neighboor_id) => {
-                                self.neighbors.lock().expect("Failed to lock packet send").remove(&neighboor_id);
+                            NodeCommand::RemoveNeighbour(neighbour_id) => {
+                                self.neighbors.lock().expect("Failed to lock packet send").remove(&neighbour_id);
                                 self.trigger_network_discovery();
                             },
                             NodeCommand::SendMessage((node_id, message)) => {
@@ -226,7 +226,7 @@ impl Node {
         // Handle Flood Request
         let mut path_trace = flood_request.path_trace;
 
-        path_trace.push((self.id, self.node_type.get_node_type()));
+        path_trace.push((self.id, self.inner_node.get_node_type()));
 
         let flood_response = FloodResponse {
             flood_id: flood_request.flood_id,
@@ -248,8 +248,11 @@ impl Node {
         self.net_d.init();
 
         // Trigger Flood Request
-        let flood_request =
-            FloodRequest::initialize(self.net_d.get_id(), self.id, self.node_type.get_node_type());
+        let flood_request = FloodRequest::initialize(
+            self.net_d.get_id(),
+            self.id,
+            self.inner_node.get_node_type(),
+        );
 
         self.packet_send
             .as_ref()
@@ -303,7 +306,7 @@ impl Node {
 
     fn handle_data_message(&mut self, peer_id: NodeId, message: Message) {
         // Handle High-level message
-        if let Some(response) = self.node_type.handle_message(peer_id, message) {
+        if let Some(response) = self.inner_node.handle_message(peer_id, message) {
             self.send_data_message(peer_id, response);
         }
     }

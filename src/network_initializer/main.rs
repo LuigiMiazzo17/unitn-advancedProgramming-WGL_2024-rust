@@ -114,7 +114,7 @@ pub fn spawn_network(
 
         for connected_id in server.connected_drone_ids.iter() {
             controller_server_send
-                .send(NodeCommand::AddNeighboor((
+                .send(NodeCommand::AddNeighbour((
                     *connected_id,
                     packet_channels[connected_id].0.clone(),
                 )))
