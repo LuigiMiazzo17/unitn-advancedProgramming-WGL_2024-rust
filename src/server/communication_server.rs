@@ -131,7 +131,9 @@ impl CommunicationServer {
 
     fn delete_chat(&mut self, chat_id: u64) {
         self.chats.remove(&chat_id);
-        fs::remove_file(self.base_path.join(chat_id.to_string())).unwrap();
+        if let Err(e) = fs::remove_file(self.base_path.join(chat_id.to_string())) {
+            println!("Failed to delete chat: {}", e);
+        }
     }
 
     fn get_chat_messages(&self, chat_id: u64) -> Response {

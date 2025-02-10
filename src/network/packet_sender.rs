@@ -1,4 +1,4 @@
-use crossbeam::channel::{Receiver, RecvTimeoutError, Sender};
+use crossbeam::channel::{select_biased, Receiver, Sender};
 use std::collections::HashMap;
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
@@ -60,65 +60,67 @@ impl PacketSender {
 
     pub fn run(&mut self) {
         loop {
-            // if queue is empty, we can just wait till new packet comes in
-            let optional_new_packet = if self.packet_send_queue.is_empty() {
-                if let Ok((peer_id, session_id, packet_type)) = self.packet_recv.recv() {
-                    Some((peer_id, session_id, packet_type))
-                } else {
-                    // if we can't receive packet, we break the loop
-                    break;
-                }
-            } else {
-                match self.packet_recv.recv_timeout(PACKET_RECV_TIMEOUT) {
-                    Ok((peer_id, session_id, packet_type)) => {
-                        Some((peer_id, session_id, packet_type))
+            // select the timeout based on the packet queues
+            let mut timeout = Duration::from_secs(0);
+
+            // we don't check the flood packets because they are always consumed
+            if self.packet_send_queue.is_empty() && self.ackable_packet_send_queue.is_empty() {
+                // here, nothing to do, wait indefinitely for a packet
+                timeout = Duration::MAX;
+            }
+            if self.packet_send_queue.is_empty() {
+                // only ackable packets to send, try to get new packets but break after timeout
+                timeout = PACKET_RECV_TIMEOUT;
+            }
+
+            select_biased! {
+                recv(self.packet_recv) -> packet => {
+                    if let Ok((peer_id, session_id, packet_type)) = packet {
+                        self.handle_packet(peer_id, session_id, packet_type);
                     }
-                    Err(err) => match err {
-                        RecvTimeoutError::Disconnected => {
-                            // if we can't receive packet, we break the loop
-                            break;
-                        }
-                        RecvTimeoutError::Timeout => None,
-                    },
+                    else {
+                        break;
+                    }
                 }
+                default(timeout) => {}
             };
 
-            // sort possible new packet, if is a fragment, we want to wait for acknolegment
-            if let Some((peer_id, session_id, packet_type)) = optional_new_packet {
-                match packet_type {
-                    PacketType::MsgFragment(_) => {
-                        self.ackable_packet_send_queue.push(AckablePacketQueueItem {
-                            common: PacketQueueItem {
-                                peer_id,
-                                session_id,
-                                packet_type,
-                            },
-                            last_send: Instant::now() - PACKET_RESEND_BACK_OFF_TIME,
-                            retries: 0,
-                        });
-                    }
-                    PacketType::FloodRequest(_) | PacketType::FloodResponse(_) => {
-                        self.flood_packets_queue.push(PacketQueueItem {
-                            peer_id,
-                            session_id,
-                            packet_type,
-                        })
-                    }
-                    _ => {
-                        self.packet_send_queue.push(PacketQueueItem {
-                            peer_id,
-                            session_id,
-                            packet_type,
-                        });
-                    }
-                };
-            };
-
-            self.process_packets();
+            self.process_queue();
         }
     }
 
-    fn process_packets(&mut self) {
+    fn handle_packet(&mut self, peer_id: NodeId, session_id: u64, packet_type: PacketType) {
+        // sort possible new packet, if is a fragment, we want to wait for acknolegment
+        match packet_type {
+            PacketType::MsgFragment(_) => {
+                self.ackable_packet_send_queue.push(AckablePacketQueueItem {
+                    common: PacketQueueItem {
+                        peer_id,
+                        session_id,
+                        packet_type,
+                    },
+                    last_send: Instant::now() - PACKET_RESEND_BACK_OFF_TIME,
+                    retries: 0,
+                });
+            }
+            PacketType::FloodRequest(_) | PacketType::FloodResponse(_) => {
+                self.flood_packets_queue.push(PacketQueueItem {
+                    peer_id,
+                    session_id,
+                    packet_type,
+                })
+            }
+            _ => {
+                self.packet_send_queue.push(PacketQueueItem {
+                    peer_id,
+                    session_id,
+                    packet_type,
+                });
+            }
+        };
+    }
+
+    fn process_queue(&mut self) {
         // retain acked fragments
         // !(peer_id == peer_id and sess_id == sess_id and f_index == f_index)
         while let Ok((peer_id, session_id, fragment_index)) = self.acked_fragments_recv.try_recv() {
