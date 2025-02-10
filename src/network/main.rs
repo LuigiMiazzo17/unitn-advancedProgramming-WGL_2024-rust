@@ -1,9 +1,8 @@
 use crossbeam::channel::{select_biased, unbounded, Receiver, Sender};
 use std::collections::HashMap;
-use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use wg_2024::network::NodeId;
 use wg_2024::packet::{
@@ -12,8 +11,9 @@ use wg_2024::packet::{
 
 use crate::network::message::Message;
 use crate::network::message_constructor::MessageConstructor;
-use crate::network::network_discovery_protocol::parse_network_from_flood_responses;
-use crate::network::packet_sender::PacketSender;
+use crate::network::network_discovery_protocol::NetDiscovery;
+
+use crate::network::packet_sender::{PacketSender, PacketSenderMessage};
 use crate::server::{CommunicationServer, ContentServer};
 
 const MAX_WAIT_FLOOD_RESPONSE: Duration = Duration::from_millis(50);
@@ -40,12 +40,8 @@ pub struct Node {
     neighbors: Arc<Mutex<HashMap<NodeId, Sender<Packet>>>>,
     network_topology: Arc<Mutex<HashMap<NodeId, Vec<NodeId>>>>,
     fragment_constructor_store: HashMap<(NodeId, u64), MessageConstructor>,
-    packet_send: Option<Sender<(NodeId, u64, PacketType)>>,
-    acked_packets_send: Option<Sender<(NodeId, u64, u64)>>,
-    network_discovery_last_id: u64,
-    network_discovery_ongoing: Arc<AtomicBool>,
-    network_discovery_responses: Vec<FloodResponse>,
-    network_discovery_start_time: Instant,
+    packet_send: Option<Sender<PacketSenderMessage>>,
+    net_d: NetDiscovery,
 }
 
 impl Node {
@@ -64,11 +60,7 @@ impl Node {
             network_topology: Default::default(),
             fragment_constructor_store: Default::default(),
             packet_send: None,
-            acked_packets_send: None,
-            network_discovery_ongoing: Arc::new(AtomicBool::new(false)),
-            network_discovery_start_time: Instant::now(),
-            network_discovery_responses: Default::default(),
-            network_discovery_last_id: 0,
+            net_d: NetDiscovery::new(),
         }
     }
 
@@ -108,22 +100,19 @@ impl Node {
         // initialize packet sender
         let (fragment_send, fragment_recv) = unbounded();
         self.packet_send = Some(fragment_send);
-        let (acked_fragments_send, acked_fragments_recv) = unbounded();
-        self.acked_packets_send = Some(acked_fragments_send);
 
         // spawn packet sender thread
         let send_queue_t = thread::Builder::new()
             .name(format!("node-packet-sender-{}", self.id))
             .spawn({
                 let node_id = self.id;
-                let network_discovery_ongoing = self.network_discovery_ongoing.clone();
+                let network_discovery_ongoing = self.net_d.get_ongoing_ref();
                 let network_topology = self.network_topology.clone();
                 let neighbors = self.neighbors.clone();
                 move || {
                     let mut fragment_sender = PacketSender::new(
                         node_id,
                         fragment_recv,
-                        acked_fragments_recv,
                         network_discovery_ongoing,
                         network_topology,
                         neighbors,
@@ -141,26 +130,19 @@ impl Node {
 
             // Check if we should stop network discovery, or we shoud wait for more responses, by
             // setting the timeout to the remaining time to wait for responses
-            if self
-                .network_discovery_ongoing
-                .load(std::sync::atomic::Ordering::Relaxed)
-            {
-                if self.network_discovery_start_time.elapsed() > MAX_WAIT_FLOOD_RESPONSE {
+            if self.net_d.get_ongoing() {
+                if self.net_d.get_elapsed() > MAX_WAIT_FLOOD_RESPONSE {
                     // Network discovery has finished, update network topology
-                    self.network_discovery_ongoing
-                        .store(false, std::sync::atomic::Ordering::Relaxed);
+                    self.net_d.set_ongoing(false);
 
                     *self
                         .network_topology
                         .lock()
-                        .expect("Failed to lock network topology") =
-                        parse_network_from_flood_responses(&self.network_discovery_responses);
-
-                    self.network_discovery_responses.clear();
+                        .expect("Failed to lock network topology") = self.net_d.parse_network();
                 } else {
                     // Wait for more responses
                     timeout = MAX_WAIT_FLOOD_RESPONSE
-                        .checked_sub(self.network_discovery_start_time.elapsed())
+                        .checked_sub(self.net_d.get_elapsed())
                         .unwrap_or(Duration::from_secs(0));
                 }
             }
@@ -200,6 +182,13 @@ impl Node {
             }
         }
 
+        self.packet_send
+            .as_ref()
+            .unwrap()
+            .send(PacketSenderMessage::Quit)
+            .unwrap();
+        self.packet_send = None;
+
         send_queue_t
             .join()
             .expect("Failed to join fragment sender thread");
@@ -211,22 +200,22 @@ impl Node {
                 self.handle_fragment(packet.routing_header.hops[0], packet.session_id, frgmt)
             }
             PacketType::Ack(ack) => {
-                self.acked_packets_send
+                self.packet_send
                     .as_ref()
                     .unwrap()
-                    .send((
+                    .send(PacketSenderMessage::AckedFragment((
                         packet.routing_header.hops[0],
                         packet.session_id,
                         ack.fragment_index,
-                    ))
+                    )))
                     .expect("Failed to send acked fragment to fragment sender");
             }
             PacketType::FloodRequest(flood_request) => {
                 self.handle_flood_request(flood_request, packet.session_id);
             }
             PacketType::FloodResponse(flood_responses) => {
-                if flood_responses.flood_id == self.network_discovery_last_id {
-                    self.network_discovery_responses.push(flood_responses);
+                if flood_responses.flood_id == self.net_d.get_id() {
+                    self.net_d.add_response(flood_responses);
                 }
             }
             _ => todo!(),
@@ -247,39 +236,30 @@ impl Node {
         self.packet_send
             .as_ref()
             .unwrap()
-            .send((
+            .send(PacketSenderMessage::Packet((
                 path_trace.last().unwrap().0,
                 session_id,
                 PacketType::FloodResponse(flood_response),
-            ))
+            )))
             .expect("Failed to send flood request");
     }
 
     fn trigger_network_discovery(&mut self) {
-        self.network_discovery_responses.clear();
-        self.network_discovery_last_id = rand::random();
+        self.net_d.init();
 
         // Trigger Flood Request
-        let flood_request = FloodRequest::initialize(
-            self.network_discovery_last_id,
-            self.id,
-            self.node_type.get_node_type(),
-        );
+        let flood_request =
+            FloodRequest::initialize(self.net_d.get_id(), self.id, self.node_type.get_node_type());
 
         self.packet_send
             .as_ref()
             .unwrap()
-            .send((
+            .send(PacketSenderMessage::Packet((
                 self.id,
                 rand::random(),
                 PacketType::FloodRequest(flood_request),
-            ))
+            )))
             .expect("Failed to send flood request");
-
-        self.network_discovery_ongoing
-            .store(true, std::sync::atomic::Ordering::Relaxed);
-
-        self.network_discovery_start_time = Instant::now();
     }
 
     fn handle_fragment(&mut self, peer_id: NodeId, session_id: u64, msg_fragment: Fragment) {
@@ -297,7 +277,11 @@ impl Node {
             self.packet_send
                 .as_ref()
                 .unwrap()
-                .send((peer_id, session_id, PacketType::Ack(Ack { fragment_index })))
+                .send(PacketSenderMessage::Packet((
+                    peer_id,
+                    session_id,
+                    PacketType::Ack(Ack { fragment_index }),
+                )))
                 .expect("Failed to send ack");
 
             // If message is complete, handle it
@@ -343,7 +327,11 @@ impl Node {
             self.packet_send
                 .as_ref()
                 .unwrap()
-                .send((peer_id, session_id, PacketType::MsgFragment(fragment)))
+                .send(PacketSenderMessage::Packet((
+                    peer_id,
+                    session_id,
+                    PacketType::MsgFragment(fragment),
+                )))
                 .expect("Failed to send fragment");
         }
     }

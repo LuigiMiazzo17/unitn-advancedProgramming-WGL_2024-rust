@@ -13,14 +13,19 @@ const PACKET_RECV_TIMEOUT: Duration = Duration::from_millis(25);
 
 pub struct PacketSender {
     node_id: NodeId,
-    packet_recv: Receiver<(NodeId, u64, PacketType)>, // (peer_id, session_id, fragment)
+    master_recv: Receiver<PacketSenderMessage>,
     packet_send_queue: Vec<PacketQueueItem>,
     ackable_packet_send_queue: Vec<AckablePacketQueueItem>,
     flood_packets_queue: Vec<PacketQueueItem>,
     neighbors: Arc<Mutex<HashMap<NodeId, Sender<Packet>>>>,
-    acked_fragments_recv: Receiver<(NodeId, u64, u64)>, // (peer_id, session_id, fragment_index)
     network_discovery_ongoing: Arc<AtomicBool>,
     network_topology: Arc<Mutex<HashMap<NodeId, Vec<NodeId>>>>,
+}
+
+pub enum PacketSenderMessage {
+    Packet((NodeId, u64, PacketType)), // (peer_id, session_id, fragment)
+    AckedFragment((NodeId, u64, u64)), // (peer_id, session_id, fragment_index)
+    Quit,
 }
 
 #[derive(Clone)]
@@ -39,20 +44,18 @@ struct AckablePacketQueueItem {
 impl PacketSender {
     pub fn new(
         node_id: NodeId,
-        packet_recv: Receiver<(NodeId, u64, PacketType)>,
-        acked_fragments_recv: Receiver<(NodeId, u64, u64)>,
+        packet_recv: Receiver<PacketSenderMessage>,
         network_discovery_ongoing: Arc<AtomicBool>,
         network_topology: Arc<Mutex<HashMap<NodeId, Vec<NodeId>>>>,
         neighbors: Arc<Mutex<HashMap<NodeId, Sender<Packet>>>>,
     ) -> Self {
         PacketSender {
             node_id,
-            packet_recv,
+            master_recv: packet_recv,
             packet_send_queue: Default::default(),
             ackable_packet_send_queue: Default::default(),
             flood_packets_queue: Default::default(),
             neighbors,
-            acked_fragments_recv,
             network_discovery_ongoing,
             network_topology,
         }
@@ -74,9 +77,14 @@ impl PacketSender {
             }
 
             select_biased! {
-                recv(self.packet_recv) -> packet => {
-                    if let Ok((peer_id, session_id, packet_type)) = packet {
-                        self.handle_packet(peer_id, session_id, packet_type);
+                recv(self.master_recv) -> message => {
+                    if let Ok(message) = message {
+                        match message {
+                            PacketSenderMessage::Packet((peer_id, session_id, packet_type)) => self.handle_new_packet(peer_id, session_id, packet_type),
+                            PacketSenderMessage::AckedFragment((peer_id, session_id, fragment_index)) => self.retain_acked_fragments(peer_id, session_id, fragment_index),
+                            PacketSenderMessage::Quit => break,
+
+                        }
                     }
                     else {
                         break;
@@ -89,7 +97,18 @@ impl PacketSender {
         }
     }
 
-    fn handle_packet(&mut self, peer_id: NodeId, session_id: u64, packet_type: PacketType) {
+    fn retain_acked_fragments(&mut self, peer_id: NodeId, session_id: u64, fragment_index: u64) {
+        self.ackable_packet_send_queue.retain(|queue_item| {
+            !(queue_item.common.peer_id == peer_id
+                && queue_item.common.session_id == session_id
+                && match &queue_item.common.packet_type {
+                    PacketType::MsgFragment(f) => f.fragment_index == fragment_index,
+                    _ => unreachable!(),
+                })
+        });
+    }
+
+    fn handle_new_packet(&mut self, peer_id: NodeId, session_id: u64, packet_type: PacketType) {
         // sort possible new packet, if is a fragment, we want to wait for acknolegment
         match packet_type {
             PacketType::MsgFragment(_) => {
@@ -121,19 +140,6 @@ impl PacketSender {
     }
 
     fn process_queue(&mut self) {
-        // retain acked fragments
-        // !(peer_id == peer_id and sess_id == sess_id and f_index == f_index)
-        while let Ok((peer_id, session_id, fragment_index)) = self.acked_fragments_recv.try_recv() {
-            self.ackable_packet_send_queue.retain(|queue_item| {
-                !(queue_item.common.peer_id == peer_id
-                    && queue_item.common.session_id == session_id
-                    && match &queue_item.common.packet_type {
-                        PacketType::MsgFragment(f) => f.fragment_index == fragment_index,
-                        _ => unreachable!(),
-                    })
-            });
-        }
-
         // drop packets that are not acked after MAX_RETRIES
         self.ackable_packet_send_queue
             .retain(|queue_item| queue_item.retries < PACKET_RESEND_MAX_RETRIES);
