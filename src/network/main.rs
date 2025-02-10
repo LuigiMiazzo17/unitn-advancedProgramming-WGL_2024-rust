@@ -163,7 +163,7 @@ impl Node {
                                 self.trigger_network_discovery();
                             },
                             NodeCommand::SendMessage((node_id, message)) => {
-                                self.send_data_message(node_id, message);
+                                self.send_data_message(node_id, None, message);
                             },
                         }
                         Err(_) => break,
@@ -299,6 +299,7 @@ impl Node {
                     .remove(&(peer_id, session_id));
                 self.handle_data_message(
                     peer_id,
+                    session_id,
                     bincode::deserialize(&buffer).expect("Failed to deserialize message"),
                 );
             }
@@ -310,19 +311,19 @@ impl Node {
         }
     }
 
-    fn handle_data_message(&mut self, peer_id: NodeId, message: Message) {
+    fn handle_data_message(&mut self, peer_id: NodeId, session_id: u64, message: Message) {
         // Handle High-level message
         if let Some(response) = self.inner_node.handle_message(peer_id, message) {
-            // if a request triggers a response, we will sand it back
-            self.send_data_message(peer_id, Message::Response(response));
+            // if a request triggers a response, we will sand it back, keeping the session id
+            self.send_data_message(peer_id, Some(session_id), Message::Response(response));
         }
     }
 
-    fn send_data_message(&mut self, peer_id: NodeId, message: Message) {
+    fn send_data_message(&mut self, peer_id: NodeId, session_id: Option<u64>, message: Message) {
         let data = bincode::serialize(&message).expect("Failed to serialize message");
 
         let fragment_size = wg_2024::packet::FRAGMENT_DSIZE;
-        let session_id: u64 = rand::random();
+        let session_id = session_id.unwrap_or(rand::random());
 
         for (i, chunk) in data.chunks(fragment_size).enumerate() {
             let mut buff = [0u8; wg_2024::packet::FRAGMENT_DSIZE];
