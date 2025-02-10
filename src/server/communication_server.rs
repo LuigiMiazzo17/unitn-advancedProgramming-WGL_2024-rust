@@ -57,6 +57,10 @@ impl NodeTrait for CommunicationServer {
     fn get_node_type(&self) -> wg_2024::packet::NodeType {
         wg_2024::packet::NodeType::Server
     }
+
+    fn get_node_type_str(&self) -> &str {
+        "CommunicationServer"
+    }
 }
 
 impl CommunicationServer {

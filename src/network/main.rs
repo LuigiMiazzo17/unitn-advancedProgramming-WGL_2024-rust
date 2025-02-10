@@ -1,4 +1,5 @@
 use crossbeam::channel::{select_biased, unbounded, Receiver, Sender};
+use log::{debug, error, trace};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -21,6 +22,7 @@ pub trait NodeTrait {
     fn handle_message(&mut self, peer_id: NodeId, message: Message) -> Option<Response>;
     fn stop(&mut self);
     fn get_node_type(&self) -> NodeType;
+    fn get_node_type_str(&self) -> &str;
 }
 
 #[derive(Debug)]
@@ -38,9 +40,10 @@ pub struct Node {
     command_recv: Receiver<NodeCommand>,
     neighbors: Arc<Mutex<HashMap<NodeId, Sender<Packet>>>>,
     network_topology: Arc<Mutex<HashMap<NodeId, Vec<NodeId>>>>,
-    fragment_constructor_store: HashMap<(NodeId, u64), MessageConstructor>,
+    fragment_constructors: HashMap<(NodeId, u64), MessageConstructor>,
     packet_send: Option<Sender<PacketSenderMessage>>,
     net_d: NetDiscovery,
+    log_target: String,
 }
 
 impl Node {
@@ -50,6 +53,7 @@ impl Node {
         command_recv: Receiver<NodeCommand>,
         packet_recv: Receiver<Packet>,
     ) -> Self {
+        let log_target = format!("{}-{}", inner_node.get_node_type_str(), id);
         Node {
             id,
             inner_node,
@@ -57,9 +61,10 @@ impl Node {
             command_recv,
             neighbors: Default::default(),
             network_topology: Default::default(),
-            fragment_constructor_store: Default::default(),
+            fragment_constructors: Default::default(),
             packet_send: None,
             net_d: NetDiscovery::new(),
+            log_target,
         }
     }
 
@@ -96,6 +101,7 @@ impl Node {
     }
 
     pub fn run(&mut self) {
+        trace!(target: &self.log_target, "Starting node");
         // initialize packet sender
         let (fragment_send, fragment_recv) = unbounded();
         self.packet_send = Some(fragment_send);
@@ -108,6 +114,7 @@ impl Node {
                 let network_discovery_ongoing = self.net_d.get_ongoing_ref();
                 let network_topology = self.network_topology.clone();
                 let neighbors = self.neighbors.clone();
+                let log_target = format!("{}-packet-sender", &self.log_target);
                 move || {
                     let mut fragment_sender = PacketSender::new(
                         node_id,
@@ -115,6 +122,7 @@ impl Node {
                         network_discovery_ongoing,
                         network_topology,
                         neighbors,
+                        log_target,
                     );
                     fragment_sender.run();
                 }
@@ -251,6 +259,7 @@ impl Node {
     }
 
     fn trigger_network_discovery(&mut self) {
+        debug!(target: &self.log_target, "Triggering network discovery");
         self.net_d.init();
 
         // Trigger Flood Request
@@ -272,18 +281,24 @@ impl Node {
     }
 
     fn handle_fragment(&mut self, peer_id: NodeId, session_id: u64, msg_fragment: Fragment) {
+        trace!(target: &self.log_target, "Received fragment with index {}", msg_fragment.fragment_index);
         // Handle recived fragment
         let fragment_index = msg_fragment.fragment_index;
 
         let constructor = self
-            .fragment_constructor_store
+            .fragment_constructors
             .entry((peer_id, session_id))
-            .or_insert(MessageConstructor::new(msg_fragment.total_n_fragments));
+            .or_insert(MessageConstructor::new(
+                format!("{}-msg-constructor", self.log_target,),
+                msg_fragment.total_n_fragments,
+            ));
 
         // Add fragment to constructor
         if let Ok(optional_buffer) = constructor.add_packet(msg_fragment) {
+            trace!(target: &self.log_target, "Fragment added to constructor");
             // Return Ack for received fragment
-            self.packet_send
+            if self
+                .packet_send
                 .as_ref()
                 .unwrap()
                 .send(PacketSenderMessage::Packet((
@@ -291,12 +306,15 @@ impl Node {
                     session_id,
                     PacketType::Ack(Ack { fragment_index }),
                 )))
-                .expect("Failed to send ack");
+                .is_err()
+            {
+                error!(target: &self.log_target, "Failed to send ack for fragment");
+            }
 
             // If message is complete, handle it
             if let Some(buffer) = optional_buffer {
-                self.fragment_constructor_store
-                    .remove(&(peer_id, session_id));
+                debug!(target: &self.log_target, "Message with session_id '{}' complete", session_id);
+                self.fragment_constructors.remove(&(peer_id, session_id));
                 self.handle_data_message(
                     peer_id,
                     session_id,
@@ -306,24 +324,34 @@ impl Node {
         } else {
             // I'd like to handle this error by returning a Nack, but the current implementation
             // of the protocol doesn't allow for it (no Nack packet type defined for this job).
-            self.fragment_constructor_store
-                .remove(&(peer_id, session_id));
+            error!(target: &self.log_target, "Failed to add fragment to constructor, dropping message");
+            self.fragment_constructors.remove(&(peer_id, session_id));
         }
     }
 
     fn handle_data_message(&mut self, peer_id: NodeId, session_id: u64, message: Message) {
+        debug!(target: &self.log_target, "Handling message with session_id '{}'", session_id);
         // Handle High-level message
         if let Some(response) = self.inner_node.handle_message(peer_id, message) {
+            debug!(target: &self.log_target, "Message generated response, forwarding message with session_id '{}'", session_id);
             // if a request triggers a response, we will sand it back, keeping the session id
             self.send_data_message(peer_id, Some(session_id), Message::Response(response));
         }
     }
 
     fn send_data_message(&mut self, peer_id: NodeId, session_id: Option<u64>, message: Message) {
-        let data = bincode::serialize(&message).expect("Failed to serialize message");
+        let session_id = session_id.unwrap_or(rand::random());
+        trace!(target: &self.log_target, "Sending message to peer '{}' with session id '{}'", peer_id, session_id);
+
+        let data = match bincode::serialize(&message) {
+            Ok(data) => data,
+            Err(e) => {
+                error!(target: &self.log_target, "Failed to serialize message: {}", e);
+                return;
+            }
+        };
 
         let fragment_size = wg_2024::packet::FRAGMENT_DSIZE;
-        let session_id = session_id.unwrap_or(rand::random());
 
         for (i, chunk) in data.chunks(fragment_size).enumerate() {
             let mut buff = [0u8; wg_2024::packet::FRAGMENT_DSIZE];
@@ -335,7 +363,8 @@ impl Node {
                 length: chunk.len() as u8,
             };
 
-            self.packet_send
+            if self
+                .packet_send
                 .as_ref()
                 .unwrap()
                 .send(PacketSenderMessage::Packet((
@@ -343,7 +372,11 @@ impl Node {
                     session_id,
                     PacketType::MsgFragment(fragment),
                 )))
-                .expect("Failed to send fragment");
+                .is_err()
+            {
+                error!(target: &self.log_target, "Failed to send fragment");
+                return;
+            }
         }
     }
 }

@@ -45,6 +45,10 @@ impl NodeTrait for ContentServer {
     fn get_node_type(&self) -> wg_2024::packet::NodeType {
         wg_2024::packet::NodeType::Server
     }
+
+    fn get_node_type_str(&self) -> &str {
+        "ContentServer"
+    }
 }
 
 impl ContentServer {
