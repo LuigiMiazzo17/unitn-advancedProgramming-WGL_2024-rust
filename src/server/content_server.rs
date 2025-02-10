@@ -12,29 +12,25 @@ pub struct ContentServer {
 }
 
 impl NodeTrait for ContentServer {
-    fn handle_message(&mut self, _peer_id: NodeId, message: Message) -> Option<Message> {
+    fn handle_message(&mut self, peer_id: NodeId, message: Message) -> Option<Response> {
         match message {
             Message::Request(request) => match request {
-                Request::ServerType => Some(Message::Response(self.handle_server_type_request())),
-                Request::ListPublicFiles => Some(Message::Response(self.list_public_files())),
-                Request::ListPrivateFiles => {
-                    Some(Message::Response(self.list_private_files(_peer_id)))
+                Request::ServerType => Some(self.handle_server_type_request()),
+                Request::ListPublicFiles => Some(self.list_public_files()),
+                Request::ListPrivateFiles => Some(self.list_private_files(peer_id)),
+                Request::GetPublicFile(file_name) => Some(self.get_public_file(&file_name)),
+                Request::GetPrivateFile(file_name) => {
+                    Some(self.get_private_file(&file_name, peer_id))
                 }
-                Request::GetPublicFile(file_name) => {
-                    Some(Message::Response(self.get_public_file(&file_name)))
-                }
-                Request::GetPrivateFile(file_name) => Some(Message::Response(
-                    self.get_private_file(&file_name, _peer_id),
-                )),
                 Request::WritePublicFile(file_name, data) => {
                     self.write_public_file(&file_name, &data);
                     None
                 }
                 Request::WritePrivateFile(file_name, data) => {
-                    self.write_private_file(&file_name, &data, _peer_id);
+                    self.write_private_file(&file_name, &data, peer_id);
                     None
                 }
-                _ => Some(Message::Response(Response::NotImplemented)),
+                _ => Some(Response::NotImplemented),
             },
             Message::Response(response) => {
                 // TODO: This is useless

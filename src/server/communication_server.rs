@@ -21,26 +21,22 @@ struct Chat {
 }
 
 impl NodeTrait for CommunicationServer {
-    fn handle_message(&mut self, peer_id: NodeId, message: Message) -> Option<Message> {
+    fn handle_message(&mut self, peer_id: NodeId, message: Message) -> Option<Response> {
         match message {
             Message::Request(request) => match request {
-                Request::ServerType => Some(Message::Response(self.handle_server_type_request())),
-                Request::GetChats => Some(Message::Response(self.get_chats())),
+                Request::ServerType => Some(self.handle_server_type_request()),
+                Request::GetChats => Some(self.get_chats()),
                 Request::SendMessage(chat_id, message) => {
                     self.add_message_to_chat(chat_id, peer_id, message);
                     None
                 }
-                Request::CreateChat(chat_name) => {
-                    Some(Message::Response(self.create_chat(chat_name)))
-                }
+                Request::CreateChat(chat_name) => Some(self.create_chat(chat_name)),
                 Request::DeleteChat(chat_id) => {
                     self.delete_chat(chat_id);
                     None
                 }
-                Request::GetMessages(chat_id) => {
-                    Some(Message::Response(self.get_chat_messages(chat_id)))
-                }
-                _ => Some(Message::Response(Response::NotImplemented)),
+                Request::GetMessages(chat_id) => Some(self.get_chat_messages(chat_id)),
+                _ => Some(Response::NotImplemented),
             },
             Message::Response(response) => {
                 // TODO: This is useless

@@ -6,23 +6,21 @@ use std::time::Duration;
 
 use wg_2024::network::NodeId;
 use wg_2024::packet::{
-    Ack, FloodRequest, FloodResponse, Fragment, Nack, NackType, NodeType as FloodNodeType, Packet,
-    PacketType,
+    Ack, FloodRequest, FloodResponse, Fragment, NackType, NodeType, Packet, PacketType,
 };
 
-use crate::network::message::Message;
+use crate::network::message::{Message, Response};
 use crate::network::message_constructor::MessageConstructor;
 use crate::network::network_discovery_protocol::NetDiscovery;
-
 use crate::network::packet_sender::{PacketSender, PacketSenderMessage};
 use crate::server::{CommunicationServer, ContentServer};
 
 const MAX_WAIT_FLOOD_RESPONSE: Duration = Duration::from_millis(50);
 
 pub trait NodeTrait {
-    fn handle_message(&mut self, peer_id: NodeId, message: Message) -> Option<Message>;
+    fn handle_message(&mut self, peer_id: NodeId, message: Message) -> Option<Response>;
     fn stop(&mut self);
-    fn get_node_type(&self) -> FloodNodeType;
+    fn get_node_type(&self) -> NodeType;
 }
 
 #[derive(Debug)]
@@ -315,7 +313,8 @@ impl Node {
     fn handle_data_message(&mut self, peer_id: NodeId, message: Message) {
         // Handle High-level message
         if let Some(response) = self.inner_node.handle_message(peer_id, message) {
-            self.send_data_message(peer_id, response);
+            // if a request triggers a response, we will sand it back
+            self.send_data_message(peer_id, Message::Response(response));
         }
     }
 
