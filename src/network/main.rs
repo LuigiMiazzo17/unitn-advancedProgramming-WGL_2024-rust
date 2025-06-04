@@ -384,14 +384,13 @@ impl Node {
             }
         };
 
-        let fragment_size = wg_2024::packet::FRAGMENT_DSIZE;
-
-        for (i, chunk) in data.chunks(fragment_size).enumerate() {
+        for (i, chunk) in data.chunks(wg_2024::packet::FRAGMENT_DSIZE).enumerate() {
             let mut buff = [0u8; wg_2024::packet::FRAGMENT_DSIZE];
             buff[..chunk.len()].copy_from_slice(chunk);
             let fragment = Fragment {
                 fragment_index: i as u64,
-                total_n_fragments: (data.len() as f64 / fragment_size as f64).ceil() as u64,
+                total_n_fragments: (data.len() as f64 / wg_2024::packet::FRAGMENT_DSIZE as f64)
+                    .ceil() as u64,
                 data: buff,
                 length: chunk.len() as u8,
             };

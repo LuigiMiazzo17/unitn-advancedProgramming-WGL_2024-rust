@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use wg_2024::network::NodeId;
 
 use crate::network::message::{Message, Request, Response, ServerType};
-use crate::network::{Node, NodeTrait, SimControllerMessage};
+use crate::network::{NodeTrait, SimControllerMessage};
 
 #[derive(Debug)]
 pub struct ContentServer {
