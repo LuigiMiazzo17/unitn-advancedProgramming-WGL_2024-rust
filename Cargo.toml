@@ -8,9 +8,21 @@ env_logger = "0.11.5"
 anyhow = "1.0.94"
 crossbeam = "0.8.4"
 log = "0.4.22"
-rand = "0.8.5"
+rand = "0.9.1"
 toml = "0.8.19"
 wg_2024 = { git = "https://github.com/WGL-2024/WGL_repo_2024.git", features = [
     "serialize",
 ] }
 wg_2024-rust = { git = "https://github.com/LuigiMiazzo17/unitn-advancedProgramming-WGL_2024-drone.git" }
+
+# Other groups's drones
+wg_drone_lockheedrustin = { git = "https://github.com/Lockheed-Rustin/drone.git", rev = "e82cf49507cf6b64d0e9cf1c90c5c3f523c321c2", package = "lockheedrustin-drone" }
+wg_drone_rusty_drones = { git = "https://github.com/rusty-drone-2024/rusty-drone.git", rev = "81aff862f2a0f43166ef1f86130d1d144a5cb4bc", package = "rusty_drones" }
+wg_drone_rustbusters = { git = "https://github.com/Rustbusters/drone.git", rev = "df312365fe1dba728d9265619d9ec27c221a72aa", package = "rustbusters-drone" }
+wg_drone_skylink = { git = "https://github.com/Suge42/Skylink_drone.git", rev = "84ccf2690d078129634c90cfa27bec9109060f21", package = "skylink" }
+wg_drone_bagel_bomber = { git = "https://github.com/daw-dev/bagel-bomber.git", rev = "222ab4f0505c3f590cb947ee937994021c96d637", package = "bagel_bomber" }
+wg_drone_bobry_w_locie = { git = "https://github.com/Seregno/Public_Bry_w_locie.git", rev = "d925eac87a36e993012eabb0c466668fe4ccad97", package = "bobry_w_locie" }
+wg_drone_d_r_o_n_e = { git = "https://github.com/AP-2024-25-D-R-O-N-E/drone.git", rev = "fdf2c4d4b712d8e793212ff15057d278c3954024", package = "d-r-o-n-e_drone" }
+wg_drone_rust_roveri = { git = "https://github.com/RustRoveri/rust-roveri.git", rev = "2bababfeb0fb77f89f69363ddf6c2c2774ab1915", package = "rust-roveri" }
+wg_drone_rust_do_it = { git = "https://github.com/RustDoIt/Drone.git", rev = "8545bfb5a81a3b64f776a3abccd236de7a7cd500", package = "rust_do_it" }
+wg_drone_ledron_james = { git = "https://github.com/anass03/LeDron_James.git", rev = "a9c5fae9556fba0d227993c29449cea895c5f955", package = "LeDron_James" }
