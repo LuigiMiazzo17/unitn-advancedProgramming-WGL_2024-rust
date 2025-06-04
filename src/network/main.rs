@@ -26,8 +26,7 @@ pub trait NodeTrait {
     fn handle_control_message(
         &mut self,
         message: SimControllerMessage,
-        send_message_to_peer: &mut dyn FnMut(NodeId, Option<u64>, Message),
-    );
+    ) -> Option<(NodeId, Option<u64>, Message)>;
 }
 
 pub enum SimControllerMessage {
@@ -189,15 +188,7 @@ impl Node {
                                 self.trigger_network_discovery();
                             },
                             NodeCommand::SendMessage(message) => {
-                                let mut msg_buff = Vec::new();
-
-                                let mut send_message_to_peer = |peer_id: NodeId, session_id: Option<u64>, message| {
-                                    msg_buff.push((peer_id, session_id, message));
-                                };
-
-                                self.inner_node.handle_control_message(message, &mut send_message_to_peer);
-
-                                for (peer_id, session_id, message) in msg_buff {
+                                if let Some((peer_id, session_id, message)) = self.inner_node.handle_control_message(message) {
                                     self.send_data_message(peer_id, session_id, message);
                                 }
                             },

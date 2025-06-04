@@ -65,11 +65,10 @@ impl NodeTrait for CommunicationServer {
     fn handle_control_message(
         &mut self,
         message: SimControllerMessage,
-        send_message_to_peer: &mut dyn FnMut(NodeId, Option<u64>, Message),
-    ) {
+    ) -> Option<(NodeId, Option<u64>, Message)> {
         match message {
             SimControllerMessage::SendMessageToPeer(peer_id, message) => {
-                send_message_to_peer(peer_id, None, message);
+                Some((peer_id, None, message))
             }
         }
     }
