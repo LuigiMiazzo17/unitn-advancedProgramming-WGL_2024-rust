@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::thread;
 
+use crate::network::ClientControlMessage;
 use crate::network::Node;
 use crate::network::NodeCommand;
 use crate::network_initializer::config::Config;
@@ -27,7 +28,10 @@ pub fn spawn_network(
 ) -> anyhow::Result<(
     HashMap<NodeId, Sender<DroneCommand>>,
     HashMap<NodeId, Sender<NodeCommand>>,
+    HashMap<NodeId, Sender<NodeCommand>>,
+    Receiver<ClientControlMessage>,
     Receiver<DroneEvent>,
+    Vec<thread::JoinHandle<()>>,
     Vec<thread::JoinHandle<()>>,
     Vec<thread::JoinHandle<()>>,
 )> {
@@ -35,6 +39,8 @@ pub fn spawn_network(
     let (node_event_send, node_event_recv) = unbounded();
 
     let mut controller_server = HashMap::new();
+    let mut controller_client = HashMap::new();
+    let (client_controller_send, client_controller_recv) = unbounded();
 
     let mut packet_channels = HashMap::new();
     for drone in config.drone.iter() {
@@ -124,11 +130,59 @@ pub fn spawn_network(
         controller_server.insert(server.id, controller_server_send);
     }
 
+    let mut c_handles = Vec::new();
+    for client in config.client.into_iter() {
+        // controller
+        let (controller_client_send, controller_client_recv) = unbounded();
+        // packet
+        let packet_recv = packet_channels[&client.id].1.clone();
+        let client_controller_send = client_controller_send.clone();
+
+        c_handles.push(
+            thread::Builder::new()
+                .name(format!("client{}", client.id))
+                .spawn(move || {
+                    let mut client = if client.client_type == "ChatClient" {
+                        Node::new_chat_client(
+                            client.id,
+                            controller_client_recv,
+                            packet_recv,
+                            client_controller_send,
+                        )
+                    } else if client.client_type == "WebBrowser" {
+                        Node::new_browser_client(
+                            client.id,
+                            controller_client_recv,
+                            packet_recv,
+                            client_controller_send,
+                        )
+                    } else {
+                        panic!("Unknown client type: {}", client.client_type);
+                    };
+
+                    client.run();
+                })?,
+        );
+
+        for connected_id in client.connected_drone_ids.iter() {
+            controller_client_send
+                .send(NodeCommand::AddNeighbour((
+                    *connected_id,
+                    packet_channels[connected_id].0.clone(),
+                )))
+                .unwrap();
+        }
+
+        controller_client.insert(client.id, controller_client_send);
+    }
     Ok((
         controller_drones,
         controller_server,
+        controller_client,
+        client_controller_recv,
         node_event_recv,
         d_handles,
         s_handles,
+        c_handles,
     ))
 }

@@ -10,6 +10,7 @@ use wg_2024::packet::{
     Ack, FloodRequest, FloodResponse, Fragment, NackType, NodeType, Packet, PacketType,
 };
 
+use crate::client::{ChatClient, WebBrowser};
 use crate::network::message::{Message, Response};
 use crate::network::message_constructor::MessageConstructor;
 use crate::network::network_discovery_protocol::NetDiscovery;
@@ -33,6 +34,16 @@ pub trait NodeTrait {
 
 pub enum SimControllerMessage {
     SendMessageToPeer(NodeId, Message),
+}
+
+pub enum ClientControlMessage {
+    ReturnResponseFromNetwork(ResponseFromNetwork),
+}
+
+pub struct ResponseFromNetwork {
+    pub peer_id: NodeId,
+    pub server_id: NodeId,
+    pub message: Response,
 }
 
 pub enum NodeCommand {
@@ -100,6 +111,34 @@ impl Node {
         Self::new(
             id,
             Box::new(CommunicationServer::new(id, base_path)),
+            command_recv,
+            packet_recv,
+        )
+    }
+
+    pub fn new_chat_client(
+        node_id: NodeId,
+        command_recv: Receiver<NodeCommand>,
+        packet_recv: Receiver<Packet>,
+        client_control_send: Sender<ClientControlMessage>,
+    ) -> Self {
+        Self::new(
+            node_id,
+            Box::new(ChatClient::new(node_id, client_control_send)),
+            command_recv,
+            packet_recv,
+        )
+    }
+
+    pub fn new_browser_client(
+        node_id: NodeId,
+        command_recv: Receiver<NodeCommand>,
+        packet_recv: Receiver<Packet>,
+        client_control_send: Sender<ClientControlMessage>,
+    ) -> Self {
+        Self::new(
+            node_id,
+            Box::new(WebBrowser::new(node_id, client_control_send)),
             command_recv,
             packet_recv,
         )

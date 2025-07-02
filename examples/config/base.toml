@@ -1,7 +1,12 @@
 [[drone]]
 id = 1
-connected_node_ids = [10, 20]
+connected_node_ids = [10, 20, 200]
 pdr = 0.0
+
+[[drone]]
+id = 2
+connected_node_ids = [20, 100]
+pdr = 0.3
 
 [[server]]
 id = 10
@@ -11,10 +16,16 @@ base_path = "/tmp/rust"
 
 [[server]]
 id = 20
-connected_drone_ids = [1]
+connected_drone_ids = [1, 2]
 server_type = "Communication"
 base_path = "/tmp/rust"
 
 [[client]]
+id = 100
+client_type = "ChatClient"
+connected_drone_ids = [2]
+
+[[client]]
 id = 200
-connected_drone_ids = []
+client_type = "WebBrowser"
+connected_drone_ids = [1]
