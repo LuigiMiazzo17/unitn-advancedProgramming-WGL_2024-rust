@@ -1,18 +1,19 @@
 use wg_2024::network::NodeId;
 use wg_2024::packet::NodeType;
 
+use log::warn;
+
 use crate::network::message::{Message, Response};
 use crate::network::{NodeTrait, SimControllerMessage};
 
 pub struct ChatClient {}
 
 impl NodeTrait for ChatClient {
-    fn handle_message(&mut self, _: NodeId, message: Message) -> Option<Response> {
+    fn handle_message(&mut self, peer_id: NodeId, message: Message) -> Option<Response> {
         match message {
             Message::Response(response) => Some(response),
-            Message::Request(request) => {
-                // TODO: This is useless
-                println!("Received request: {request:?}");
+            Message::Request(_) => {
+                warn!("Server received request message from peer {peer_id}");
                 None
             }
         }
