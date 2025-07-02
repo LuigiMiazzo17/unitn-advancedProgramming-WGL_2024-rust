@@ -291,7 +291,7 @@ impl Node {
                 session_id,
                 PacketType::FloodResponse(flood_response),
             )))
-            .expect("Failed to send flood request");
+            .expect("Failed to send flood response");
     }
 
     fn trigger_network_discovery(&mut self) {

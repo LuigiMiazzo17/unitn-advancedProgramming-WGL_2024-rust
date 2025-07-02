@@ -62,8 +62,15 @@ impl NodeTrait for CommunicationServer {
     fn stop(&mut self) {
         for (chat_id, chat) in &self.chats {
             let path = self.base_path.join(chat_id.to_string());
-            let chat = serde_json::to_string(chat).unwrap();
-            fs::write(path, chat).unwrap();
+            match serde_json::to_string(chat) {
+                Ok(chat) => match fs::write(path, chat) {
+                    Ok(_) => info!("Chat {} saved successfully", chat_id),
+                    Err(e) => error!("Failed to write chat {} to file: {}", chat_id, e),
+                },
+                Err(e) => {
+                    error!("Failed to serialize chat {}: {}", chat_id, e);
+                }
+            }
         }
     }
 
@@ -96,7 +103,9 @@ impl CommunicationServer {
         let mut chats = HashMap::new();
 
         if !path.exists() {
-            fs::create_dir_all(&path).unwrap();
+            if let Err(e) = fs::create_dir_all(&path) {
+                panic!("Failed to create communication directory: {}", e);
+            }
         }
 
         for entry in fs::read_dir(&path).unwrap() {
@@ -187,17 +196,25 @@ impl CommunicationServer {
     }
 
     fn get_chat_messages(&self, chat_id: u64) -> Response {
-        let chat = self.chats.get(&chat_id).unwrap();
-        let messages = chat
-            .messages
-            .iter()
-            .map(|message| ChatMessage {
-                author: message.author,
-                message: message.message.clone(),
-                timestamp: message.timestamp.clone(),
-            })
-            .collect();
-        Response::ChatResponse(ChatResponse::Messages(messages))
+        match self.chats.get(&chat_id) {
+            Some(chat) => {
+                trace!("Retrieving messages for chat {}", chat_id);
+                let messages = chat
+                    .messages
+                    .iter()
+                    .map(|message| ChatMessage {
+                        author: message.author,
+                        message: message.message.clone(),
+                        timestamp: message.timestamp.clone(),
+                    })
+                    .collect();
+                Response::ChatResponse(ChatResponse::Messages(messages))
+            }
+            None => {
+                warn!("Chat {} does not exist", chat_id);
+                Response::Error("Chat does not exist".to_string())
+            }
+        }
     }
 
     fn join_chat(&mut self, peer_id: NodeId, chat_id: u64, password: Option<String>) -> Response {

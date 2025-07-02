@@ -43,7 +43,10 @@ impl MessageConstructor {
             }
         };
 
-        while self.fragments.get(self.completed_up_to as usize).is_some() {
+        while matches!(
+            self.fragments.get(self.completed_up_to as usize),
+            Some(Some(_))
+        ) {
             self.completed_up_to += 1;
         }
 

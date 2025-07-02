@@ -1,6 +1,7 @@
 use crossbeam::channel::{select_biased, Receiver, Sender};
 use log::{debug, error, info, trace, warn};
 use std::collections::HashMap;
+use std::collections::VecDeque;
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -369,10 +370,11 @@ impl PacketSender {
         };
 
         let mut visited = vec![self.node_id];
-        let mut queue = vec![vec![self.node_id]];
+        let mut queue: VecDeque<Vec<NodeId>> = VecDeque::new();
 
-        while !queue.is_empty() {
-            let path = queue.remove(0);
+        queue.push_back(vec![self.node_id]);
+
+        while let Some(path) = queue.pop_front() {
             let last_node = *path.last().unwrap();
 
             if last_node == peer_id {
@@ -386,7 +388,7 @@ impl PacketSender {
                         let mut new_path = path.clone();
                         new_path.push(*neighbour);
                         visited.push(*neighbour);
-                        queue.push(new_path);
+                        queue.push_back(new_path);
                     }
                 }
             }

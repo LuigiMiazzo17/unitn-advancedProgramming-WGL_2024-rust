@@ -125,8 +125,10 @@ impl ContentServer {
             Err(_) => {
                 if let Err(e) = fs::create_dir_all(path) {
                     error!("Failed to create directory {}: {}", path.display(), e);
+                    Response::Error("Failed to list files".to_string())
+                } else {
+                    Response::ContentResponse(ContentResponse::Files(vec![]))
                 }
-                Response::Error("Failed to list files".to_string())
             }
         }
     }
