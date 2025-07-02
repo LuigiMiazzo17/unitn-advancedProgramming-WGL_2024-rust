@@ -53,7 +53,7 @@ impl NodeTrait for CommunicationServer {
                 _ => Some(Response::NotImplemented),
             },
             Message::Response(_) => {
-                warn!("Received response message from peer");
+                warn!("Server received response message from peer {}", peer_id);
                 None
             }
         }
@@ -138,7 +138,7 @@ impl CommunicationServer {
             Some(chat) => {
                 if !chat.registered_peers.contains(&author) {
                     warn!("Peer {} is not registered in chat {}", author, chat_id);
-                    Response::ChatResponse(ChatResponse::Error("Not in chat".to_string()))
+                    Response::Error("Not in chat".to_string())
                 } else {
                     trace!("Message added to chat {} by peer {}", chat_id, author);
                     chat.messages.push(ChatMessage {
@@ -151,7 +151,7 @@ impl CommunicationServer {
             }
             None => {
                 warn!("Chat {} does not exist", chat_id);
-                Response::ChatResponse(ChatResponse::Error("Chat does not exist".to_string()))
+                Response::Error("Chat does not exist".to_string())
             }
         }
     }
@@ -175,11 +175,11 @@ impl CommunicationServer {
     fn delete_chat(&mut self, chat_id: u64) -> Response {
         if self.chats.remove(&chat_id).is_none() {
             warn!("Chat {} does not exist", chat_id);
-            return Response::ChatResponse(ChatResponse::Error("Chat does not exist".to_string()));
+            return Response::Error("Chat does not exist".to_string());
         }
         if let Err(e) = fs::remove_file(self.base_path.join(chat_id.to_string())) {
             error!("Failed to delete chat file {}: {}", chat_id, e);
-            Response::ChatResponse(ChatResponse::Error("Failed to delete chat".to_string()))
+            Response::Error("Failed to delete chat".to_string())
         } else {
             info!("Chat {} deleted successfully", chat_id);
             Response::Success
@@ -210,18 +210,18 @@ impl CommunicationServer {
                     Response::Success
                 } else {
                     warn!("Peer {} is already in chat {}", peer_id, chat_id);
-                    Response::ChatResponse(ChatResponse::Error("Already in chat".to_string()))
+                    Response::Error("Already in chat".to_string())
                 }
             } else {
                 warn!(
                     "Peer {} failed to join chat {}: wrong password",
                     peer_id, chat_id
                 );
-                Response::ChatResponse(ChatResponse::Error("Wrong password".to_string()))
+                Response::Error("Wrong password".to_string())
             }
         } else {
             warn!("Chat {} does not exist", chat_id);
-            Response::ChatResponse(ChatResponse::Error("Chat does not exist".to_string()))
+            Response::Error("Chat does not exist".to_string())
         }
     }
 
@@ -234,11 +234,11 @@ impl CommunicationServer {
                 Response::Success
             } else {
                 warn!("Peer {} is not in chat {}", peer_id, chat_id);
-                Response::ChatResponse(ChatResponse::Error("Not in chat".to_string()))
+                Response::Error("Not in chat".to_string())
             }
         } else {
             warn!("Chat {} does not exist", chat_id);
-            Response::ChatResponse(ChatResponse::Error("Chat does not exist".to_string()))
+            Response::Error("Chat does not exist".to_string())
         }
     }
 }

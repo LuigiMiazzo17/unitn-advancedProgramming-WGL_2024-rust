@@ -1,9 +1,12 @@
+use log::{debug, error, info, trace, warn};
 use std::fs;
 use std::path::PathBuf;
 
 use wg_2024::network::NodeId;
 
-use crate::network::message::{Message, Request, Response, ServerType};
+use crate::network::message::{
+    ContentRequest, ContentResponse, Message, Request, Response, ServerType,
+};
 use crate::network::{NodeTrait, SimControllerMessage};
 
 #[derive(Debug)]
@@ -13,28 +16,33 @@ pub struct ContentServer {
 
 impl NodeTrait for ContentServer {
     fn handle_message(&mut self, peer_id: NodeId, message: Message) -> Option<Response> {
+        trace!("Handling message from peer {}: {:?}", peer_id, message);
         match message {
             Message::Request(request) => match request {
                 Request::ServerType => Some(self.handle_server_type_request()),
-                Request::ListPublicFiles => Some(self.list_public_files()),
-                Request::ListPrivateFiles => Some(self.list_private_files(peer_id)),
-                Request::GetPublicFile(file_name) => Some(self.get_public_file(&file_name)),
-                Request::GetPrivateFile(file_name) => {
-                    Some(self.get_private_file(&file_name, peer_id))
-                }
-                Request::WritePublicFile(file_name, data) => {
-                    self.write_public_file(&file_name, &data);
-                    None
-                }
-                Request::WritePrivateFile(file_name, data) => {
-                    self.write_private_file(&file_name, &data, peer_id);
-                    None
+                Request::ContentRequest(content_request) => {
+                    debug!("Received ContentRequest from peer {}", peer_id);
+                    Some(match content_request {
+                        ContentRequest::ListPublicFiles => self.list_public_files(),
+                        ContentRequest::ListPrivateFiles => self.list_private_files(peer_id),
+                        ContentRequest::GetPublicFile(file_name) => {
+                            self.get_public_file(&file_name)
+                        }
+                        ContentRequest::GetPrivateFile(file_name) => {
+                            self.get_private_file(&file_name, peer_id)
+                        }
+                        ContentRequest::WritePublicFile(file_name, data) => {
+                            self.write_public_file(&file_name, &data)
+                        }
+                        ContentRequest::WritePrivateFile(file_name, data) => {
+                            self.write_private_file(&file_name, &data, peer_id)
+                        }
+                    })
                 }
                 _ => Some(Response::NotImplemented),
             },
-            Message::Response(response) => {
-                // TODO: This is useless
-                println!("Received response: {:?}", response);
+            Message::Response(_) => {
+                warn!("Server received response message from peer {}", peer_id);
                 None
             }
         }
@@ -70,7 +78,13 @@ impl ContentServer {
             .join("content");
 
         if !path.exists() {
-            fs::create_dir_all(&path).unwrap();
+            if let Err(e) = fs::create_dir_all(&path) {
+                error!(
+                    "Failed to create content server directory {}: {}",
+                    path.display(),
+                    e
+                );
+            }
         }
 
         ContentServer { base_path: path }
@@ -98,7 +112,7 @@ impl ContentServer {
 
     fn list_files(path: &PathBuf) -> Response {
         match fs::read_dir(path) {
-            Ok(files) => Response::Files(
+            Ok(files) => Response::ContentResponse(ContentResponse::Files(
                 files
                     .into_iter()
                     .filter_map(|entry| {
@@ -107,50 +121,64 @@ impl ContentServer {
                             .and_then(|e| e.file_name().into_string().ok().map(|s| s.to_string()))
                     })
                     .collect(),
-            ),
+            )),
             Err(_) => {
-                fs::create_dir_all(path).expect("Failed to create directory");
-                Response::Files(Vec::new())
+                if let Err(e) = fs::create_dir_all(path) {
+                    error!("Failed to create directory {}: {}", path.display(), e);
+                }
+                Response::Error("Failed to list files".to_string())
             }
         }
     }
 
     fn get_public_file(&self, file_name: &str) -> Response {
         if file_name.contains("..") {
-            return Response::NoSuchFile;
+            return Response::Error("Invalid file name".to_string());
         }
         Self::get_file(&self.get_public_dir().join(file_name))
     }
 
     fn get_private_file(&self, file_name: &str, peer_id: NodeId) -> Response {
         if file_name.contains("..") {
-            return Response::NoSuchFile;
+            return Response::Error("Invalid file name".to_string());
         }
         Self::get_file(&self.get_private_dir(peer_id).join(file_name))
     }
 
     fn get_file(path: &PathBuf) -> Response {
         match fs::read_to_string(path) {
-            Ok(data) => Response::File(data),
-            Err(_) => Response::NoSuchFile,
+            Ok(data) => Response::ContentResponse(ContentResponse::File(data)),
+            Err(_) => Response::Error("Failed to read file".to_string()),
         }
     }
 
-    fn write_public_file(&self, file_name: &str, data: &str) {
+    fn write_public_file(&self, file_name: &str, data: &str) -> Response {
         if file_name.contains("..") {
-            return;
+            warn!("Invalid file name: {}", file_name);
+            Response::Error("Invalid file name".to_string())
+        } else {
+            debug!("Writing public file: {}", file_name);
+            Self::write_file(&self.get_public_dir().join(file_name), data);
+            Response::Success
         }
-        Self::write_file(&self.get_public_dir().join(file_name), data);
     }
 
-    fn write_private_file(&self, file_name: &str, data: &str, peer_id: NodeId) {
+    fn write_private_file(&self, file_name: &str, data: &str, peer_id: NodeId) -> Response {
         if file_name.contains("..") {
-            return;
+            warn!("Invalid file name: {}", file_name);
+            Response::Error("Invalid file name".to_string())
+        } else {
+            debug!("Writing private file: {} for peer {}", file_name, peer_id);
+            Self::write_file(&self.get_private_dir(peer_id).join(file_name), data);
+            Response::Success
         }
-        Self::write_file(&self.get_private_dir(peer_id).join(file_name), data);
     }
 
     fn write_file(path: &PathBuf, data: &str) {
-        fs::write(path, data).expect("Failed to write file");
+        if let Err(e) = fs::write(path, data) {
+            error!("Failed to write file {}: {}", path.display(), e);
+        } else {
+            info!("File written successfully: {}", path.display());
+        }
     }
 }

@@ -12,23 +12,17 @@ pub enum Message {
 pub enum Request {
     ServerType,
     ChatRequest(ChatRequest),
-    ListPublicFiles,
-    GetPublicFile(String),
-    WritePublicFile(String, String),
-    ListPrivateFiles,
-    GetPrivateFile(String),
-    WritePrivateFile(String, String),
+    ContentRequest(ContentRequest),
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 pub enum Response {
     ServerType(ServerType),
     ChatResponse(ChatResponse),
-    Files(Vec<String>),
-    File(String),
-    NoSuchFile,
+    ContentResponse(ContentResponse),
     NotImplemented,
     Success,
+    Error(String),
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -72,5 +66,20 @@ pub enum ChatRequest {
 pub enum ChatResponse {
     Chats(Vec<ChatResponseMessage>), // list of chats
     Messages(Vec<ChatMessage>),      // messages in a chat
-    Error(String),                   // error message
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub enum ContentRequest {
+    ListPublicFiles,
+    GetPublicFile(String),
+    WritePublicFile(String, String),
+    ListPrivateFiles,
+    GetPrivateFile(String),
+    WritePrivateFile(String, String),
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub enum ContentResponse {
+    Files(Vec<String>), // list of files
+    File(String),       // file content
 }
