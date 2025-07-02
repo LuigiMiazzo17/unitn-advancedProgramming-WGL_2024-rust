@@ -11,11 +11,7 @@ pub enum Message {
 #[derive(Serialize, Deserialize, Debug)]
 pub enum Request {
     ServerType,
-    GetChats,
-    SendMessage(u64, String),
-    CreateChat(String),
-    DeleteChat(u64),
-    GetMessages(u64),
+    ChatRequest(ChatRequest),
     ListPublicFiles,
     GetPublicFile(String),
     WritePublicFile(String, String),
@@ -27,13 +23,12 @@ pub enum Request {
 #[derive(Serialize, Deserialize, Debug)]
 pub enum Response {
     ServerType(ServerType),
-    Chats(Vec<ChatResponse>),
-    NewChat(ChatResponse),
-    Messages(Vec<ChatMessage>),
+    ChatResponse(ChatResponse),
     Files(Vec<String>),
     File(String),
     NoSuchFile,
     NotImplemented,
+    Success,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -43,7 +38,7 @@ pub enum ServerType {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-pub struct ChatResponse {
+pub struct ChatResponseMessage {
     pub id: u64,
     pub name: String,
 }
@@ -53,4 +48,29 @@ pub struct ChatMessage {
     pub author: NodeId,
     pub message: String,
     pub timestamp: String,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct CreateChatRequest {
+    pub name: String,
+    pub public: bool,
+    pub password: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub enum ChatRequest {
+    Join(u64, Option<String>), // chat id, optional password
+    Leave(u64),                // chat id
+    SendMessage(u64, String),  // chat id, message
+    Create(CreateChatRequest), // chat details
+    Delete(u64),               // chat id
+    GetChats,                  // list all chats
+    GetMessages(u64),          // chat id
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub enum ChatResponse {
+    Chats(Vec<ChatResponseMessage>), // list of chats
+    Messages(Vec<ChatMessage>),      // messages in a chat
+    Error(String),                   // error message
 }

@@ -1,5 +1,5 @@
 use chrono::Utc;
-use log::warn;
+use log::{error, info, trace, warn};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
@@ -7,7 +7,10 @@ use std::path::PathBuf;
 
 use wg_2024::network::NodeId;
 
-use crate::network::message::{ChatMessage, ChatResponse, Message, Request, Response, ServerType};
+use crate::network::message::{
+    ChatMessage, ChatRequest, ChatResponse, ChatResponseMessage, CreateChatRequest, Message,
+    Request, Response, ServerType,
+};
 use crate::network::{NodeTrait, SimControllerMessage};
 
 pub struct CommunicationServer {
@@ -18,6 +21,9 @@ pub struct CommunicationServer {
 #[derive(Serialize, Deserialize)]
 struct Chat {
     name: String,
+    public: bool,
+    password: Option<String>,
+    registered_peers: Vec<NodeId>,
     messages: Vec<ChatMessage>,
 }
 
@@ -26,17 +32,24 @@ impl NodeTrait for CommunicationServer {
         match message {
             Message::Request(request) => match request {
                 Request::ServerType => Some(self.handle_server_type_request()),
-                Request::GetChats => Some(self.get_chats()),
-                Request::SendMessage(chat_id, message) => {
-                    self.add_message_to_chat(chat_id, peer_id, message);
-                    None
+                Request::ChatRequest(chat_request) => {
+                    info!("Received ChatRequest from peer {}", peer_id);
+                    Some(match chat_request {
+                        ChatRequest::Create(create_chat_request) => {
+                            self.create_chat(peer_id, create_chat_request)
+                        }
+                        ChatRequest::Join(chat_id, password) => {
+                            self.join_chat(peer_id, chat_id, password)
+                        }
+                        ChatRequest::Leave(chat_id) => self.leave_chat(peer_id, chat_id),
+                        ChatRequest::Delete(chat_id) => self.delete_chat(chat_id),
+                        ChatRequest::SendMessage(chat_id, message) => {
+                            self.add_message_to_chat(chat_id, peer_id, message)
+                        }
+                        ChatRequest::GetChats => self.get_chats(),
+                        ChatRequest::GetMessages(chat_id) => self.get_chat_messages(chat_id),
+                    })
                 }
-                Request::CreateChat(chat_name) => Some(self.create_chat(chat_name)),
-                Request::DeleteChat(chat_id) => {
-                    self.delete_chat(chat_id);
-                    None
-                }
-                Request::GetMessages(chat_id) => Some(self.get_chat_messages(chat_id)),
                 _ => Some(Response::NotImplemented),
             },
             Message::Response(_) => {
@@ -109,41 +122,67 @@ impl CommunicationServer {
         let chats = self
             .chats
             .iter()
-            .map(|(id, chat)| ChatResponse {
+            .filter(|(_, chat)| chat.public)
+            .map(|(id, chat)| ChatResponseMessage {
                 id: *id,
                 name: chat.name.clone(),
             })
             .collect();
-        Response::Chats(chats)
+        Response::ChatResponse(ChatResponse::Chats(chats))
     }
 
-    fn add_message_to_chat(&mut self, chat_id: u64, author: NodeId, message: String) {
-        let chat = self.chats.get_mut(&chat_id).unwrap();
-        chat.messages.push(ChatMessage {
-            author,
-            message,
-            timestamp: Utc::now().to_rfc3339(),
-        });
+    fn add_message_to_chat(&mut self, chat_id: u64, author: NodeId, message: String) -> Response {
+        trace!("Adding message to chat {} by peer {}", chat_id, author);
+        let chat = self.chats.get_mut(&chat_id);
+        match chat {
+            Some(chat) => {
+                if !chat.registered_peers.contains(&author) {
+                    warn!("Peer {} is not registered in chat {}", author, chat_id);
+                    Response::ChatResponse(ChatResponse::Error("Not in chat".to_string()))
+                } else {
+                    trace!("Message added to chat {} by peer {}", chat_id, author);
+                    chat.messages.push(ChatMessage {
+                        author,
+                        message,
+                        timestamp: Utc::now().to_rfc3339(),
+                    });
+                    Response::Success
+                }
+            }
+            None => {
+                warn!("Chat {} does not exist", chat_id);
+                Response::ChatResponse(ChatResponse::Error("Chat does not exist".to_string()))
+            }
+        }
     }
 
-    fn create_chat(&mut self, name: String) -> Response {
+    fn create_chat(&mut self, peer_id: NodeId, chat_request: CreateChatRequest) -> Response {
         let id = rand::random();
 
-        self.chats.insert(
-            id,
+        self.chats.insert(id, {
             Chat {
-                name: name.clone(),
-                messages: Default::default(),
-            },
-        );
+                name: chat_request.name,
+                public: chat_request.public,
+                password: chat_request.password,
+                registered_peers: vec![peer_id],
+                messages: Vec::new(),
+            }
+        });
 
-        Response::NewChat(ChatResponse { id, name })
+        Response::Success
     }
 
-    fn delete_chat(&mut self, chat_id: u64) {
-        self.chats.remove(&chat_id);
+    fn delete_chat(&mut self, chat_id: u64) -> Response {
+        if self.chats.remove(&chat_id).is_none() {
+            warn!("Chat {} does not exist", chat_id);
+            return Response::ChatResponse(ChatResponse::Error("Chat does not exist".to_string()));
+        }
         if let Err(e) = fs::remove_file(self.base_path.join(chat_id.to_string())) {
-            println!("Failed to delete chat: {}", e);
+            error!("Failed to delete chat file {}: {}", chat_id, e);
+            Response::ChatResponse(ChatResponse::Error("Failed to delete chat".to_string()))
+        } else {
+            info!("Chat {} deleted successfully", chat_id);
+            Response::Success
         }
     }
 
@@ -158,6 +197,48 @@ impl CommunicationServer {
                 timestamp: message.timestamp.clone(),
             })
             .collect();
-        Response::Messages(messages)
+        Response::ChatResponse(ChatResponse::Messages(messages))
+    }
+
+    fn join_chat(&mut self, peer_id: NodeId, chat_id: u64, password: Option<String>) -> Response {
+        info!("Peer {} requested to join chat {}", peer_id, chat_id);
+        if let Some(chat) = self.chats.get_mut(&chat_id) {
+            if chat.password.as_ref() == password.as_ref() {
+                if !chat.registered_peers.contains(&peer_id) {
+                    chat.registered_peers.push(peer_id);
+                    trace!("Peer {} joined chat {}", peer_id, chat_id);
+                    Response::Success
+                } else {
+                    warn!("Peer {} is already in chat {}", peer_id, chat_id);
+                    Response::ChatResponse(ChatResponse::Error("Already in chat".to_string()))
+                }
+            } else {
+                warn!(
+                    "Peer {} failed to join chat {}: wrong password",
+                    peer_id, chat_id
+                );
+                Response::ChatResponse(ChatResponse::Error("Wrong password".to_string()))
+            }
+        } else {
+            warn!("Chat {} does not exist", chat_id);
+            Response::ChatResponse(ChatResponse::Error("Chat does not exist".to_string()))
+        }
+    }
+
+    fn leave_chat(&mut self, peer_id: NodeId, chat_id: u64) -> Response {
+        info!("Peer {} requested to leave chat {}", peer_id, chat_id);
+        if let Some(chat) = self.chats.get_mut(&chat_id) {
+            if let Some(pos) = chat.registered_peers.iter().position(|&id| id == peer_id) {
+                chat.registered_peers.remove(pos);
+                trace!("Peer {} left chat {}", peer_id, chat_id);
+                Response::Success
+            } else {
+                warn!("Peer {} is not in chat {}", peer_id, chat_id);
+                Response::ChatResponse(ChatResponse::Error("Not in chat".to_string()))
+            }
+        } else {
+            warn!("Chat {} does not exist", chat_id);
+            Response::ChatResponse(ChatResponse::Error("Chat does not exist".to_string()))
+        }
     }
 }
