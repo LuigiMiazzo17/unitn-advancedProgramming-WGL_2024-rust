@@ -14,7 +14,8 @@ const PACKET_RECV_TIMEOUT: Duration = Duration::from_millis(25);
 
 pub struct PacketSender {
     node_id: NodeId,
-    master_recv: Receiver<PacketSenderMessage>,
+    master_recv: Receiver<PacketSenderDutyMessage>,
+    master_send: Sender<PacketSenderControlMessage>,
     packet_send_queue: Vec<PacketQueueItem>,
     ackable_packet_send_queue: Vec<AckablePacketQueueItem>,
     flood_packets_queue: Vec<PacketQueueItem>,
@@ -24,10 +25,19 @@ pub struct PacketSender {
     log_target: String,
 }
 
-pub enum PacketSenderMessage {
+pub enum PacketSenderDutyMessage {
     Packet((NodeId, u64, PacketType)), // (peer_id, session_id, fragment)
     AckedFragment((NodeId, u64, u64)), // (peer_id, session_id, fragment_index)
     Quit,
+}
+
+pub enum PacketSenderControlMessage {
+    TriggerNetworkDiscovery,
+}
+
+enum RoutePacketError {
+    NoRouteFound(Box<PacketQueueItem>),
+    SendError,
 }
 
 #[derive(Clone)]
@@ -46,7 +56,8 @@ struct AckablePacketQueueItem {
 impl PacketSender {
     pub fn new(
         node_id: NodeId,
-        packet_recv: Receiver<PacketSenderMessage>,
+        packet_recv: Receiver<PacketSenderDutyMessage>,
+        packet_send: Sender<PacketSenderControlMessage>,
         network_discovery_ongoing: Arc<AtomicBool>,
         network_topology: Arc<Mutex<HashMap<NodeId, Vec<NodeId>>>>,
         neighbors: Arc<Mutex<HashMap<NodeId, Sender<Packet>>>>,
@@ -56,6 +67,7 @@ impl PacketSender {
         PacketSender {
             node_id,
             master_recv: packet_recv,
+            master_send: packet_send,
             packet_send_queue: Default::default(),
             ackable_packet_send_queue: Default::default(),
             flood_packets_queue: Default::default(),
@@ -86,15 +98,15 @@ impl PacketSender {
                 recv(self.master_recv) -> message => {
                     if let Ok(message) = message {
                         match message {
-                            PacketSenderMessage::Packet((peer_id, session_id, packet_type)) => {
+                            PacketSenderDutyMessage::Packet((peer_id, session_id, packet_type)) => {
                                 debug!(target: &self.log_target, "Received new packet {:?}", packet_type);
                                 self.handle_new_packet(peer_id, session_id, packet_type)
                             },
-                            PacketSenderMessage::AckedFragment((peer_id, session_id, fragment_index)) => {
+                            PacketSenderDutyMessage::AckedFragment((peer_id, session_id, fragment_index)) => {
                                 trace!(target: &self.log_target, "Received AckedFragment message with fragment index '{}' on session '{}'", fragment_index, session_id);
                                 self.retain_acked_fragments(peer_id, session_id, fragment_index)
                             },
-                            PacketSenderMessage::Quit => {
+                            PacketSenderDutyMessage::Quit => {
                                 info!(target: &self.log_target, "Received Quit message, stopping PacketSender");
                                 break
                         }
@@ -177,11 +189,21 @@ impl PacketSender {
             .load(std::sync::atomic::Ordering::Relaxed)
         {
             // consume all non-acked packets, by routing them
-            debug!(target: &self.log_target, "Network discovery is not ongoing, sending standard packets");
             trace!(target: &self.log_target, "Sending standard packets");
             let packet_send_queue = std::mem::take(&mut self.packet_send_queue);
             for packet in packet_send_queue.into_iter() {
-                self.route_packet(packet);
+                let boxed = Box::new(packet);
+                if let Err(RoutePacketError::NoRouteFound(packet)) = self.route_packet(boxed) {
+                    // if we can't route the packet, we will try to resend it later, let the
+                    // controller node know that we need to trigger network discovery
+                    self.packet_send_queue.push(*packet);
+                    if let Err(e) = self
+                        .master_send
+                        .send(PacketSenderControlMessage::TriggerNetworkDiscovery)
+                    {
+                        error!(target: &self.log_target, "Failed to send TriggerNetworkDiscovery message: {}", e);
+                    }
+                }
             }
 
             // try to send all ackable packets, but only if they are ready
@@ -189,7 +211,18 @@ impl PacketSender {
             let mut ackable_packet_send_queue = std::mem::take(&mut self.ackable_packet_send_queue);
             for packet in ackable_packet_send_queue.iter_mut() {
                 if packet.last_send.elapsed() >= PACKET_RESEND_BACK_OFF_TIME {
-                    self.route_packet(packet.common.clone());
+                    if let Err(RoutePacketError::NoRouteFound(_)) =
+                        self.route_packet(Box::new(packet.common.clone()))
+                    {
+                        // if we can't route the packet, we will try to resend it later, let the
+                        // controller node know that we need to trigger network discovery
+                        if let Err(e) = self
+                            .master_send
+                            .send(PacketSenderControlMessage::TriggerNetworkDiscovery)
+                        {
+                            error!(target: &self.log_target, "Failed to send TriggerNetworkDiscovery message: {}", e);
+                        }
+                    }
                     packet.last_send = Instant::now();
                     packet.retries += 1;
                 }
@@ -284,13 +317,13 @@ impl PacketSender {
         }
     }
 
-    fn route_packet(&self, packet: PacketQueueItem) {
+    fn route_packet(&self, packet: Box<PacketQueueItem>) -> Result<(), RoutePacketError> {
         trace!(target: &self.log_target, "Routing packet {:?}", packet.packet_type);
         let packet_send = match self.neighbors.lock() {
             Ok(neighbors) => neighbors,
             Err(e) => {
                 error!(target: &self.log_target, "Failed to lock neighbors mutex: {}", e);
-                return;
+                return Err(RoutePacketError::SendError);
             }
         };
 
@@ -298,8 +331,7 @@ impl PacketSender {
             Some(path) => path,
             None => {
                 warn!(target: &self.log_target, "Failed to get route to peer '{}'", packet.peer_id);
-                // TODO: Consider triggering a network discovery
-                return;
+                return Err(RoutePacketError::NoRouteFound(packet));
             }
         };
 
@@ -316,12 +348,14 @@ impl PacketSender {
             Some(sender) => sender,
             None => {
                 error!(target: &self.log_target, "Failed to get sender for packet, destination was '{}' but path was '{:?}'", packet.routing_header.hops[1], packet.routing_header.hops);
-                return;
+                return Err(RoutePacketError::SendError);
             }
         };
         if sender.send(packet).is_err() {
             error!(target: &self.log_target, "Failed to send packet");
+            return Err(RoutePacketError::SendError);
         }
+        Ok(())
     }
 
     fn get_route_to_peer(&self, peer_id: NodeId) -> Option<Vec<NodeId>> {

@@ -13,7 +13,9 @@ use wg_2024::packet::{
 use crate::network::message::{Message, Response};
 use crate::network::message_constructor::MessageConstructor;
 use crate::network::network_discovery_protocol::NetDiscovery;
-use crate::network::packet_sender::{PacketSender, PacketSenderMessage};
+use crate::network::packet_sender::{
+    PacketSender, PacketSenderControlMessage, PacketSenderDutyMessage,
+};
 use crate::server::{CommunicationServer, ContentServer};
 
 const MAX_WAIT_FLOOD_RESPONSE: Duration = Duration::from_millis(50);
@@ -48,7 +50,7 @@ pub struct Node {
     neighbors: Arc<Mutex<HashMap<NodeId, Sender<Packet>>>>,
     network_topology: Arc<Mutex<HashMap<NodeId, Vec<NodeId>>>>,
     fragment_constructors: HashMap<(NodeId, u64), MessageConstructor>,
-    packet_send: Option<Sender<PacketSenderMessage>>,
+    packet_send: Option<Sender<PacketSenderDutyMessage>>,
     net_d: NetDiscovery,
     log_target: String,
 }
@@ -111,6 +113,7 @@ impl Node {
         trace!(target: &self.log_target, "Starting node");
         // initialize packet sender
         let (fragment_send, fragment_recv) = unbounded();
+        let (packet_sender_send, packet_sender_recv) = unbounded();
         self.packet_send = Some(fragment_send);
 
         // spawn packet sender thread
@@ -126,6 +129,7 @@ impl Node {
                     let mut fragment_sender = PacketSender::new(
                         node_id,
                         fragment_recv,
+                        packet_sender_send,
                         network_discovery_ongoing,
                         network_topology,
                         neighbors,
@@ -196,6 +200,19 @@ impl Node {
                         Err(_) => break,
                     }
                 }
+                recv(packet_sender_recv) -> packet_sender_message => {
+                    match packet_sender_message {
+                        Ok(message) => match message {
+                            PacketSenderControlMessage::TriggerNetworkDiscovery => {
+                                self.trigger_network_discovery();
+                            }
+                        }
+                        Err(_) => {
+                            error!(target: &self.log_target, "Packet sender channel closed, stopping node");
+                            break;
+                        }
+                    }
+                }
                 recv(self.packet_recv) -> packet => {
                     if let Ok(packet) = packet {
                         self.handle_packet(packet);
@@ -211,7 +228,7 @@ impl Node {
         self.packet_send
             .as_ref()
             .unwrap()
-            .send(PacketSenderMessage::Quit)
+            .send(PacketSenderDutyMessage::Quit)
             .unwrap();
         self.packet_send = None;
 
@@ -229,7 +246,7 @@ impl Node {
                 self.packet_send
                     .as_ref()
                     .unwrap()
-                    .send(PacketSenderMessage::AckedFragment((
+                    .send(PacketSenderDutyMessage::AckedFragment((
                         packet.routing_header.hops[0],
                         packet.session_id,
                         ack.fragment_index,
@@ -269,7 +286,7 @@ impl Node {
         self.packet_send
             .as_ref()
             .unwrap()
-            .send(PacketSenderMessage::Packet((
+            .send(PacketSenderDutyMessage::Packet((
                 path_trace.last().unwrap().0,
                 session_id,
                 PacketType::FloodResponse(flood_response),
@@ -291,7 +308,7 @@ impl Node {
         self.packet_send
             .as_ref()
             .unwrap()
-            .send(PacketSenderMessage::Packet((
+            .send(PacketSenderDutyMessage::Packet((
                 self.id,
                 rand::random(),
                 PacketType::FloodRequest(flood_request),
@@ -320,7 +337,7 @@ impl Node {
                 .packet_send
                 .as_ref()
                 .unwrap()
-                .send(PacketSenderMessage::Packet((
+                .send(PacketSenderDutyMessage::Packet((
                     peer_id,
                     session_id,
                     PacketType::Ack(Ack { fragment_index }),
@@ -390,7 +407,7 @@ impl Node {
                 .packet_send
                 .as_ref()
                 .unwrap()
-                .send(PacketSenderMessage::Packet((
+                .send(PacketSenderDutyMessage::Packet((
                     peer_id,
                     session_id,
                     PacketType::MsgFragment(fragment),
