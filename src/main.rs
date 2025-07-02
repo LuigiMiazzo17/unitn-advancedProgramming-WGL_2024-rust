@@ -30,15 +30,15 @@ fn main() -> anyhow::Result<()> {
     //         Message::Request(Request::WritePublicFile("file2".to_string(), "ciaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaduhapjfbewphbgerpauhorbfhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhho".to_string())),
     //     )))?;
 
-    controller_server
-        .get(&10)
-        .unwrap()
-        .send(NodeCommand::SendMessage(
-            SimControllerMessage::SendMessageToPeer(
-                20,
-                Message::Request(Request::DeleteChat(6852741936126412825)),
-            ),
-        ))?;
+    // controller_server
+    //     .get(&10)
+    //     .unwrap()
+    //     .send(NodeCommand::SendMessage(
+    //         SimControllerMessage::SendMessageToPeer(
+    //             20,
+    //             Message::Request(Request::DeleteChat(6852741936126412825)),
+    //         ),
+    //     ))?;
 
     thread::sleep(Duration::from_secs(1));
 
