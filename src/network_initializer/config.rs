@@ -13,6 +13,7 @@ pub struct Drone {
 pub struct Client {
     pub id: NodeId,
     pub connected_drone_ids: Vec<NodeId>,
+    pub client_type: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]

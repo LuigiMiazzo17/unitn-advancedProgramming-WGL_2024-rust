@@ -12,8 +12,16 @@ fn main() -> anyhow::Result<()> {
 
     let config = parse_config("examples/config/base.toml")?;
 
-    let (controller_drones, controller_server, node_event_recv, mut d_handles, mut s_handles) =
-        spawn_network(config)?;
+    let (
+        controller_drones,
+        controller_server,
+        controller_client,
+        client_controller_recv,
+        node_event_recv,
+        mut d_handles,
+        mut s_handles,
+        mut c_handles,
+    ) = spawn_network(config)?;
 
     let mut controller = SimulationController {
         drones: controller_drones,
