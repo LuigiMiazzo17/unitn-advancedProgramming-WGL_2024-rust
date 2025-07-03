@@ -1,7 +1,7 @@
 [package]
-name = "wg_2024_rust_group"
+name = "unitn-advancedProgramming-WGL_2024-rust"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 
 [dependencies]
 toml = "0.8.19"
@@ -14,11 +14,16 @@ log = "0.4.22"
 serde = { version = "1.0.217", features = ["derive"] }
 serde_json = "1.0.138"
 rand = "0.9.1"
+axum = "0.8.4"
+tower-http = { version = "0.6.6", features = ["fs"] }
+tokio = { version = "1.45.1", features = ["full", "rt-multi-thread"] }
+base64 = "0.21.5"
+
 wg_2024 = { git = "https://github.com/WGL-2024/WGL_repo_2024.git", features = [
     "serialize",
 ] }
-wg_2024-rust = { git = "https://github.com/LuigiMiazzo17/unitn-advancedProgramming-WGL_2024-drone.git" }
 
+wg_2024-rust = { git = "https://github.com/LuigiMiazzo17/unitn-advancedProgramming-WGL_2024-drone.git" }
 # Other groups's drones
 wg_drone_lockheedrustin = { git = "https://github.com/Lockheed-Rustin/drone.git", rev = "e82cf49507cf6b64d0e9cf1c90c5c3f523c321c2", package = "lockheedrustin-drone" }
 wg_drone_rusty_drones = { git = "https://github.com/rusty-drone-2024/rusty-drone.git", rev = "81aff862f2a0f43166ef1f86130d1d144a5cb4bc", package = "rusty_drones" }
