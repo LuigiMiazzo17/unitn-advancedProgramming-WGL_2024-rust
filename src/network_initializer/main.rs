@@ -13,6 +13,7 @@ use wg_2024_rust::drone::RustDrone;
 use wg_2024::controller::{DroneCommand, DroneEvent};
 use wg_2024::drone::Drone;
 use wg_2024::network::NodeId;
+use wg_2024::packet::Packet;
 
 pub fn parse_config(file: &str) -> anyhow::Result<Config> {
     let file_str = fs::read_to_string(file)?;
@@ -27,14 +28,16 @@ pub fn spawn_network(
 ) -> anyhow::Result<(
     HashMap<NodeId, Sender<DroneCommand>>,
     HashMap<NodeId, Sender<NodeCommand>>,
+    Vec<thread::JoinHandle<()>>,
+    Vec<thread::JoinHandle<()>>,
+    Sender<DroneEvent>,
     Receiver<DroneEvent>,
-    Vec<thread::JoinHandle<()>>,
-    Vec<thread::JoinHandle<()>>,
+    HashMap<NodeId, (Sender<Packet>, Receiver<Packet>)>,
 )> {
-    let mut controller_drones = HashMap::new();
+    let mut controller_drones: HashMap<u8, Sender<DroneCommand>> = HashMap::new();
     let (node_event_send, node_event_recv) = unbounded();
 
-    let mut controller_server = HashMap::new();
+    let mut controller_server: HashMap<u8, Sender<NodeCommand>> = HashMap::new();
 
     let mut packet_channels = HashMap::new();
     for drone in config.drone.iter() {
@@ -50,10 +53,17 @@ pub fn spawn_network(
     let mut d_handles = Vec::new();
     for drone in config.drone.into_iter() {
         // controller
+        // controller_drone_send is used to send commands to the drone
+        // controller_drone_recv is used by the drone to receive commands from the controller
         let (controller_drone_send, controller_drone_recv) = unbounded();
         controller_drones.insert(drone.id, controller_drone_send);
+
+        // node_event_send is used by the drone to send commands to the controller
+        // node_event_recv is used by the controller to receive commands by the drone
         let node_event_send = node_event_send.clone();
         // packet
+        // packet_recv is used by the drone to receive packets from other nodes
+        // packet_send is a map of connected node IDs to their respective packet senders
         let packet_recv = packet_channels[&drone.id].1.clone();
         let packet_send = drone
             .connected_node_ids
@@ -75,7 +85,8 @@ pub fn spawn_network(
                     );
 
                     drone.run();
-                })?,
+                }
+            )?
         );
     }
 
@@ -109,7 +120,8 @@ pub fn spawn_network(
                     };
 
                     server.run();
-                })?,
+                }
+            )?
         );
 
         for connected_id in server.connected_drone_ids.iter() {
@@ -127,8 +139,10 @@ pub fn spawn_network(
     Ok((
         controller_drones,
         controller_server,
-        node_event_recv,
         d_handles,
         s_handles,
+        node_event_send,
+        node_event_recv,
+        packet_channels
     ))
 }
