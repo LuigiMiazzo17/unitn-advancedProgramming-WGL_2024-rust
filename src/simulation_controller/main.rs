@@ -111,7 +111,7 @@ impl SimulationController {
     }
     
     /// Add a new drone to the simulation
-    pub fn add_drone(&mut self) -> anyhow::Result<()> {
+    pub fn add_drone(&mut self) -> anyhow::Result<u8> {
         let id = self.get_id();
         let (controller_drone_send, controller_drone_recv) = unbounded();
         let node_event_send: Sender<DroneEvent> = self.drone_event_send.clone();
@@ -140,11 +140,11 @@ impl SimulationController {
             )?
         );
         
-        Ok(())  // Return the ID of the newly created server
+        Ok(id)
     }
     
     /// Add a new server to the simulation
-    pub fn add_server(&mut self, server_type: ServerType) -> anyhow::Result<()> {
+    pub fn add_server(&mut self, server_type: ServerType) -> anyhow::Result<u8> {
         let id = self.get_id();
         let (controller_server_send, controller_server_recv) = unbounded();
         
@@ -183,6 +183,11 @@ impl SimulationController {
                 })?
         );
         
-        Ok(())  // Return the ID of the newly created server
+        Ok(id)    // Return the ID of the newly created server
+    }
+
+    pub fn add_client() {
+        //TODO: Implement client addition logic
+        unimplemented!()
     }
 }

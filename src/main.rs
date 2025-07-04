@@ -20,19 +20,6 @@ use tokio::net::TcpListener;
 use tower_http::services::ServeDir;
 use unitn_advancedProgramming_WGL_2024_rust::utils::*;
 
-// Request structures for API endpoints
-#[derive(serde::Deserialize)]
-struct AddNodeRequest {
-    node_name: String,
-    node_type: String,
-}
-
-#[derive(serde::Deserialize)]
-struct AddEdgeRequest {
-    from_id: u8,
-    to_id: u8,
-}
-
 // Shared state structure - wraps the simulation controller for thread-safe access
 #[derive(Clone)]
 struct AppState {
@@ -50,7 +37,7 @@ async fn get_topology() -> Json<Value> {
             for drone in &config.drone {
                 nodes.push(json!({
                     "data": {
-                        "id": format!("drone_{}", drone.id),
+                        "id": format!("{}", drone.id),
                         "label": format!("Drone {}", drone.id),
                         "type": "drone"
                     }
@@ -60,9 +47,9 @@ async fn get_topology() -> Json<Value> {
                 for connected_id in &drone.connected_node_ids {
                     edges.push(json!({
                         "data": {
-                            "id": format!("edge_{}_{}", drone.id, connected_id),
-                            "source": format!("drone_{}", drone.id),
-                            "target": format!("server_{}", connected_id)
+                            "id": format!("{}-{}", drone.id, connected_id),
+                            "source": format!("{}", drone.id),
+                            "target": format!("{}", connected_id)
                         }
                     }));
                 }
@@ -72,7 +59,7 @@ async fn get_topology() -> Json<Value> {
             for server in &config.server {
                 nodes.push(json!({
                     "data": {
-                        "id": format!("server_{}", server.id),
+                        "id": format!("{}", server.id),
                         "label": format!("Server {} ({})", server.id, server.server_type),
                         "type": "server"
                     }
@@ -83,22 +70,22 @@ async fn get_topology() -> Json<Value> {
             for client in &config.client {
                 nodes.push(json!({
                     "data": {
-                        "id": format!("client_{}", client.id),
+                        "id": format!("{}", client.id),
                         "label": format!("Client {}", client.id),
                         "type": "client"
                     }
                 }));
 
-                // Add edges from client to connected drones
-                for drone_id in &client.connected_drone_ids {
-                    edges.push(json!({
-                        "data": {
-                            "id": format!("edge_{}_{}", client.id, drone_id),
-                            "source": format!("client_{}", client.id),
-                            "target": format!("drone_{}", drone_id)
-                        }
-                    }));
-                }
+                // // Add edges from client to connected drones
+                // for drone_id in &client.connected_drone_ids {
+                //     edges.push(json!({
+                //         "data": {
+                //             "id": format!("edge_{}_{}", client.id, drone_id),
+                //             "source": format!("client_{}", client.id),
+                //             "target": format!("drone_{}", drone_id)
+                //         }
+                //     }));
+                // }
             }
 
             Json(json!({
@@ -198,60 +185,72 @@ async fn get_nodes() -> Json<Value> {
     Json(json!({ "nodes": nodes }))
 }
 
-async fn send_message(State(state): State<AppState>, Json(ids): Json<Edge>) -> impl IntoResponse {
-    debug!("Sending message from {} to {}", ids.0, ids.1);
+async fn send_message(State(state): State<AppState>, Json(edge): Json<Edge>) -> impl IntoResponse {
+    debug!("Sending message from {} to {}", edge.from_id, edge.to_id);
     // Access the simulation controller
     let controller = state.simulation_controller.lock().unwrap();
-    match controller.send_message(ids.0, ids.1) {
+    match controller.send_message(edge.from_id, edge.to_id) {
         Ok(()) => {
             return (
                 StatusCode::OK,
-                format!("Message sent from {} to {}", ids.0, ids.1),
+                Json(json!({
+                    "message": format!("Message sent from {} to {}", edge.from_id, edge.to_id)
+                })),
             );
         }
         Err(e) => {
             return (
                 StatusCode::BAD_REQUEST,
-                format!("Source node {} does not exist", e),
+                Json(json!({
+                    "error": format!("Failed to send message: {}", e)
+                })),
             );
         }
     }
 }
 
-async fn add_edge(State(state): State<AppState>, Json(ids): Json<Edge>) -> impl IntoResponse {
-    debug!("Adding edge from {} to {}", ids.0, ids.1);
+async fn add_edge(State(state): State<AppState>, Json(edge): Json<Edge>) -> impl IntoResponse {
+    debug!("Adding edge from {} to {}", edge.from_id, edge.to_id);
     // Access the simulation controller
     let mut controller = state.simulation_controller.lock().unwrap();
 
     // Check if both nodes exist
     let from_exists =
-        controller.drones.contains_key(&ids.0) || controller.servers.contains_key(&ids.1);
+        controller.drones.contains_key(&edge.from_id) || controller.servers.contains_key(&edge.to_id);
     let to_exists =
-        controller.drones.contains_key(&ids.0) || controller.servers.contains_key(&ids.1);
+        controller.drones.contains_key(&edge.from_id) || controller.servers.contains_key(&edge.to_id);
 
     if !from_exists {
         return (
             StatusCode::BAD_REQUEST,
-            format!("Source node {} does not exist", &ids.0),
+            Json(json!({
+                "error": format!("Source node {} does not exist", edge.from_id)
+            })),
         );
     }
 
     if !to_exists {
         return (
             StatusCode::BAD_REQUEST,
-            format!("Source node {} does not exist", &ids.1),
+            Json(json!({
+                "error": format!("Target node {} does not exist", edge.to_id)
+            })),
         );
     }
 
     // Actually add the edge
-    match controller.add_edge(ids.0, ids.1) {
+    match controller.add_edge(edge.from_id, edge.to_id) {
         Ok(()) => (
             StatusCode::CREATED,
-            format!("Edge {} -> {} added successfully", ids.0, ids.1),
+            Json(json!({
+                "message": format!("Edge added from {} to {}", edge.from_id, edge.to_id)
+            })),
         ),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
-            format!("Failed to add edge: {}", e),
+            Json(json!({
+                "error": format!("Failed to add edge: {}", e)
+            }))
         ),
     }
 }
@@ -264,7 +263,9 @@ async fn add_node(
     let node_type = match payload {
         Ok(Json(node_type)) => node_type,
         Err(err) => {
-            return (StatusCode::BAD_REQUEST, format!("Invalid JSON: {}", err));
+            return (StatusCode::BAD_REQUEST, Json(json!({
+                "error": format!("Invalid JSON: {}", err)
+            })));
         }
     };
 
@@ -272,33 +273,42 @@ async fn add_node(
 
     match node_type {
         NodeType::Drone(drone_type) => match controller.add_drone() {
-            Ok(()) => (
+            Ok(id) => (
                 StatusCode::CREATED,
-                format!("Drone of type '{:?}' created", drone_type),
+                Json(json!({
+                    "message": format!("Drone of type '{:?}' created", drone_type),
+                    "id": id,
+                })),
             ),
             Err(e) => (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                format!("Failed to create drone: {}", e),
+                Json(json!({
+                    "error": format!("Failed to create drone: {}", e)
+                })),
             ),
         },
 
         NodeType::Server(server_type) => match controller.add_server(server_type.clone()) {
-            Ok(()) => (
+            Ok(id) => (
                 StatusCode::CREATED,
-                format!("Server of type '{:?}' created", server_type),
+                Json(json!({
+                    "message": format!("Server of type '{:?}' created", server_type),
+                    "id": id,
+                })),
             ),
             Err(e) => (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                format!("Failed to create server: {}", e),
+                Json(json!({
+                    "error": format!("Failed to create server: {}", e)
+                })),
             ),
         },
 
         NodeType::Client(client_type) => (
             StatusCode::OK,
-            format!(
-                "Client of type '{:?}' registered (spawning not implemented)",
-                client_type
-            ),
+            Json(json!({
+                "message": format!("Client of type '{:?}' is not supported yet", client_type)
+            }))
         ),
     }
 }

@@ -42,7 +42,10 @@ pub enum DroneType {
 }
 
 #[derive(Deserialize)]
-pub struct Edge(pub u8, pub u8);
+pub struct Edge {
+    pub from_id: u8,
+    pub to_id: u8,
+}
 
 // Convert drone dependency name to display name
 // e.g., "wg_drone_bobry_w_locie" -> "Bobry W Locie"
