@@ -8,7 +8,7 @@ use unitn_advancedProgramming_WGL_2024_rust::simulation_controller::{
 };
 
 use axum::{
-    extract::{State, rejection::JsonRejection},
+    extract::{Path, State, rejection::JsonRejection},
     response::{IntoResponse, Json},
     routing::{Router, get, post},
 };
@@ -142,7 +142,7 @@ async fn get_nodes() -> Json<Value> {
                             if dep_name.starts_with("wg_drone_") {
                                 // Convert drone name to PascalCase display name
                                 let display_name = format_drone_name(dep_name);
-                                info!("Found drone dependency: {}", display_name);
+                                debug!("Found drone dependency: {}", display_name);
                                 nodes.push(json!({
                                     "name": display_name,
                                     "type": "drone",
@@ -191,6 +191,33 @@ async fn get_nodes() -> Json<Value> {
     Json(json!({ "nodes": nodes }))
 }
 
+async fn get_node(State(state): State<AppState>, Path(id): Path<u8>) -> impl IntoResponse {
+    info!("Fetching node with ID: {}", id);
+    // Access the simulation controller
+    let controller = state.simulation_controller.lock().unwrap();
+
+    match controller.get_node_data(id) {
+        Ok((label, neighbours, _)) => {
+            let neighbours: Vec<Value> = neighbours
+                .into_iter()
+                .map(|(id, label, n_type)| json!({ "id": id, "label": label, "type": n_type }))
+                .collect();
+            let node_json = json!({
+                "label": label,
+                "neighbours": neighbours,
+            });
+            (StatusCode::OK, Json(node_json))
+        }
+        Err(e) => {
+            error!("Error fetching node with ID {}: {}", id, e);
+            (
+                StatusCode::NOT_FOUND,
+                Json(json!({ "error": format!("Node with ID {} not found", id) })),
+            )
+        }
+    }
+}
+
 async fn send_message(State(state): State<AppState>, Json(edge): Json<Edge>) -> impl IntoResponse {
     debug!("Sending message from {} to {}", edge.from_id, edge.to_id);
     // Access the simulation controller
@@ -206,6 +233,28 @@ async fn send_message(State(state): State<AppState>, Json(edge): Json<Edge>) -> 
             StatusCode::BAD_REQUEST,
             Json(json!({
                 "error": format!("Failed to send message: {}", e)
+            })),
+        ),
+    }
+}
+
+async fn delete_node(State(state): State<AppState>, Path(id): Path<u8>) -> impl IntoResponse {
+    info!("Crashing drone with ID: {}", id);
+    // Access the simulation controller
+    let mut controller = state.simulation_controller.lock().unwrap();
+
+    // Attempt to crash the drone
+    match controller.delete_node(id) {
+        Ok(()) => (
+            StatusCode::OK,
+            Json(json!({
+                "message": format!("Drone {} crashed successfully", id)
+            })),
+        ),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({
+                "error": format!("Failed to crash drone {}: {}", id, e)
             })),
         ),
     }
@@ -228,6 +277,28 @@ async fn add_edge(State(state): State<AppState>, Json(edge): Json<Edge>) -> impl
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(json!({
                 "error": format!("Failed to add edge: {}", e)
+            })),
+        ),
+    }
+}
+
+async fn delete_edge(State(state): State<AppState>, Json(edge): Json<Edge>) -> impl IntoResponse {
+    info!("Deleting edge from {} to {}", edge.from_id, edge.to_id);
+    // Access the simulation controller
+    let mut controller = state.simulation_controller.lock().unwrap();
+
+    // Delete the edge
+    match controller.delete_edge(edge.from_id, edge.to_id) {
+        Ok(()) => (
+            StatusCode::OK,
+            Json(json!({
+                "message": format!("Edge deleted from {} to {}", edge.from_id, edge.to_id)
+            })),
+        ),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({
+                "error": format!("Failed to delete edge: {}", e)
             })),
         ),
     }
@@ -311,7 +382,8 @@ async fn main() -> anyhow::Result<()> {
     let app = Router::new()
         .route("/api/topology", get(get_topology))
         .route("/api/nodes", get(get_nodes).post(add_node))
-        .route("/api/edges", post(add_edge))
+        .route("/api/node/{id}", get(get_node).delete(delete_node))
+        .route("/api/edges", post(add_edge).delete(delete_edge))
         .route("/api/messages", post(send_message))
         .with_state(app_state)
         .fallback_service(ServeDir::new("./dist").append_index_html_on_directories(true));

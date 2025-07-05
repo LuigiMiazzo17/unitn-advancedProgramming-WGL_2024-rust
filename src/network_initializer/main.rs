@@ -72,6 +72,7 @@ pub fn spawn_network(config: Config) -> anyhow::Result<SimulationController> {
         );
 
         let mut drone = SimCntDrone::new(
+            drone_cfg.id,
             controller_drone_send,
             drone_cfg.pdr,
             "".to_string(), //TODO: Figure out this
@@ -120,7 +121,7 @@ pub fn spawn_network(config: Config) -> anyhow::Result<SimulationController> {
                 })?,
         );
 
-        let mut server = SimCntServer::new(controller_server_send, server_type);
+        let mut server = SimCntServer::new(server_cfg.id, controller_server_send, server_type);
 
         for connected_id in server_cfg.connected_drone_ids.iter() {
             server.add_neighbour(*connected_id, packet_channels[connected_id].0.clone());
@@ -166,7 +167,7 @@ pub fn spawn_network(config: Config) -> anyhow::Result<SimulationController> {
                 })?,
         );
 
-        let mut client = SimCntClient::new(controller_client_send, client_type);
+        let mut client = SimCntClient::new(client_cfg.id, controller_client_send, client_type);
 
         for connected_id in client_cfg.connected_drone_ids.iter() {
             client.add_neighbour(*connected_id, packet_channels[connected_id].0.clone());

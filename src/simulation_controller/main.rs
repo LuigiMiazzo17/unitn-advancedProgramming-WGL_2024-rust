@@ -4,7 +4,7 @@ use crate::simulation_controller::network_object::{Client, Drone, NetworkObject,
 use crate::utils::*;
 
 use crossbeam::channel::{Receiver, Sender, unbounded};
-use log::{error, info, warn};
+use log::{error, info};
 use std::collections::HashMap;
 use std::thread;
 use std::thread::JoinHandle;
@@ -89,6 +89,18 @@ impl SimulationController {
         Ok(())
     }
 
+    fn get_net_obj_from_id(&self, id: NodeId) -> Option<&dyn NetworkObject> {
+        if let Some(drone) = self.drones.get(&id) {
+            Some(drone)
+        } else if let Some(server) = self.servers.get(&id) {
+            Some(server)
+        } else if let Some(client) = self.clients.get(&id) {
+            Some(client)
+        } else {
+            None
+        }
+    }
+
     fn get_net_obj_from_id_mut(&mut self, id: NodeId) -> Option<&mut dyn NetworkObject> {
         if let Some(drone) = self.drones.get_mut(&id) {
             Some(drone)
@@ -144,6 +156,111 @@ impl SimulationController {
         }
     }
 
+    pub fn delete_edge(&mut self, from_id: NodeId, to_id: NodeId) -> Result<(), String> {
+        info!(target: LOG_TARGET, "Deleting edge from {} to {}", from_id, to_id);
+
+        if from_id == to_id {
+            error!(target: LOG_TARGET, "Cannot delete edge from node {} to itself!", from_id);
+            return Err(format!(
+                "Cannot delete edge from node {} to itself!",
+                from_id
+            ));
+        }
+
+        let res_from = match self.get_net_obj_from_id_mut(from_id) {
+            Some(from) => from.remove_neighbour(to_id),
+            None => {
+                error!(target: LOG_TARGET, "Node with ID {} not found!", from_id);
+                Err(format!("Node with ID {} not found!", from_id))
+            }
+        };
+
+        let res_to = match self.get_net_obj_from_id_mut(to_id) {
+            Some(to) => to.remove_neighbour(from_id),
+            None => {
+                error!(target: LOG_TARGET, "Node with ID {} not found!", to_id);
+                Err(format!("Node with ID {} not found!", to_id))
+            }
+        };
+
+        match (res_from, res_to) {
+            (Ok(()), Ok(())) => Ok(()),
+            (Err(e), Ok(())) | (Ok(()), Err(e)) => Err(e),
+            (Err(e), Err(f)) => Err(format!("{}; {}", e, f)),
+        }
+    }
+
+    pub fn get_node_data(
+        &self,
+        id: NodeId,
+    ) -> Result<(String, Vec<(NodeId, String, String)>, Option<f32>), String> {
+        let node = self.get_net_obj_from_id(id);
+
+        if let Some(node) = node {
+            let neighbours: Vec<(NodeId, String, String)> = node
+                .get_neighbours()
+                .iter()
+                .map(|id| {
+                    (
+                        *id,
+                        self.get_net_obj_from_id(*id).unwrap().get_label(),
+                        self.get_net_obj_from_id(*id).unwrap().get_type_string(),
+                    )
+                })
+                .collect();
+            let label = node.get_label();
+
+            Ok((label, neighbours, None))
+        } else {
+            error!(target: LOG_TARGET, "Node with ID {} not found!", id);
+            Err(format!("Node with ID {} not found!", id))
+        }
+    }
+
+    pub fn delete_node(&mut self, id: NodeId) -> anyhow::Result<()> {
+        info!(target: LOG_TARGET, "Deleting node with ID {}", id);
+
+        // Remove the node from the packet channels
+        self.packet_channels.remove(&id);
+
+        // Remove the node from drones, servers, or clients
+        if let Some(drone) = self.drones.remove(&id) {
+            for neighbour_id in drone.get_neighbours() {
+                if let Some(neighbour) = self.get_net_obj_from_id_mut(*neighbour_id) {
+                    if let Err(e) = neighbour.remove_neighbour(id) {
+                        error!(target: LOG_TARGET, "Failed to remove neighbour {} from drone {}: {}", id, neighbour_id, e);
+                    }
+                }
+            }
+            drone.get_cmd_send().send(DroneCommand::Crash)?;
+            Ok(())
+        } else if let Some(server) = self.servers.remove(&id) {
+            for neighbour_id in server.get_neighbours() {
+                if let Some(neighbour) = self.get_net_obj_from_id_mut(*neighbour_id) {
+                    if let Err(e) = neighbour.remove_neighbour(id) {
+                        error!(target: LOG_TARGET, "Failed to remove neighbour {} from drone {}: {}", id, neighbour_id, e);
+                    }
+                }
+            }
+            server.get_cmd_send().send(NodeCommand::Quit)?;
+
+            Ok(())
+        } else if let Some(client) = self.clients.remove(&id) {
+            for neighbour_id in client.get_neighbours() {
+                if let Some(neighbour) = self.get_net_obj_from_id_mut(*neighbour_id) {
+                    if let Err(e) = neighbour.remove_neighbour(id) {
+                        error!(target: LOG_TARGET, "Failed to remove neighbour {} from client {}: {}", id, neighbour_id, e);
+                    }
+                }
+            }
+            client.get_cmd_send().send(NodeCommand::Quit)?;
+            Ok(())
+        } else {
+            error!(target: LOG_TARGET, "Node with ID {} not found!", id);
+            Err(anyhow::anyhow!("Node with ID {} not found!", id))
+        }
+    }
+
     /// Add a new drone to the simulation
     pub fn add_drone(&mut self) -> anyhow::Result<u8> {
         let id = self.get_id();
@@ -153,6 +270,7 @@ impl SimulationController {
         let (packet_send, packet_recv) = unbounded();
 
         let drone = Drone::new(
+            id,
             controller_drone_send.clone(),
             1.0,
             String::new(), //TODO: Set group name if needed
@@ -194,8 +312,10 @@ impl SimulationController {
         self.packet_channels.insert(id, packet_send);
 
         // Insert server controller before spawning thread
-        self.servers
-            .insert(id, Server::new(controller_server_send, server_type.clone()));
+        self.servers.insert(
+            id,
+            Server::new(id, controller_server_send, server_type.clone()),
+        );
 
         self.s_handles
             .push(thread::Builder::new().name(format!("server{}", id)).spawn(
@@ -225,8 +345,46 @@ impl SimulationController {
         Ok(id) // Return the ID of the newly created server
     }
 
-    pub fn add_client() {
-        //TODO: Implement client addition logic
-        unimplemented!()
+    pub fn add_client(&mut self, client_type: ClientType) -> anyhow::Result<u8> {
+        let id = self.get_id();
+        let (controller_client_send, controller_client_recv) = unbounded();
+
+        // Create packet channel for the new server
+        let (packet_send, packet_recv) = unbounded();
+        self.packet_channels.insert(id, packet_send);
+
+        // Insert server controller before spawning thread
+        self.clients.insert(
+            id,
+            Client::new(id, controller_client_send, client_type.clone()),
+        );
+
+        let client_event_send = self.client_event_send.clone();
+        self.c_handles
+            .push(thread::Builder::new().name(format!("client{}", id)).spawn(
+            move || {
+                let mut client = match client_type {
+                    ClientType::Web => Node::new_browser_client(
+                        id,
+                        controller_client_recv,
+                        packet_recv,
+                        client_event_send,
+                    ),
+                    _ => {
+                        info!(target: LOG_TARGET, "Creating content server with ID: {}", id);
+                        Node::new_chat_client(
+                            id,
+                            controller_client_recv,
+                            packet_recv,
+                            client_event_send,
+                        )
+                    }
+                };
+
+                client.run();
+            },
+        )?);
+
+        Ok(id) // Return the ID of the newly created server
     }
 }
