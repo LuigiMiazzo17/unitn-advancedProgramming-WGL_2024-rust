@@ -362,23 +362,25 @@ async fn add_node(
     let mut controller = state.simulation_controller.lock().unwrap();
 
     match node_type {
-        NodeType::Drone(drone_type) => match controller.add_drone() {
-            Ok(id) => (
-                StatusCode::CREATED,
-                Json(json!({
-                    "message": format!("Drone of type '{:?}' created", drone_type),
-                    "id": id,
-                })),
-            ),
-            Err(e) => (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({
-                    "error": format!("Failed to create drone: {}", e)
-                })),
-            ),
-        },
+        NodeType::Drone(drone_type) => {
+            match controller.add_drone(None, drone_type.clone(), Some(1.0)) {
+                Ok(id) => (
+                    StatusCode::CREATED,
+                    Json(json!({
+                        "message": format!("Drone of type '{:?}' created", drone_type),
+                        "id": id,
+                    })),
+                ),
+                Err(e) => (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({
+                        "error": format!("Failed to create drone: {}", e)
+                    })),
+                ),
+            }
+        }
 
-        NodeType::Server(server_type) => match controller.add_server(server_type.clone()) {
+        NodeType::Server(server_type) => match controller.add_server(None, server_type.clone()) {
             Ok(id) => (
                 StatusCode::CREATED,
                 Json(json!({
@@ -394,12 +396,21 @@ async fn add_node(
             ),
         },
 
-        NodeType::Client(client_type) => (
-            StatusCode::OK,
-            Json(json!({
-                "message": format!("Client of type '{:?}' is not supported yet", client_type)
-            })),
-        ),
+        NodeType::Client(client_type) => match controller.add_client(None, client_type.clone()) {
+            Ok(id) => (
+                StatusCode::CREATED,
+                Json(json!({
+                    "message": format!("Client of type '{:?}' created", client_type),
+                    "id": id,
+                })),
+            ),
+            Err(e) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({
+                    "error": format!("Failed to create client: {}", e)
+                })),
+            ),
+        },
     }
 }
 

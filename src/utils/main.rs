@@ -1,4 +1,5 @@
 use log::error;
+use std::fmt::Display;
 use std::fs;
 
 use base64::{Engine as _, engine::general_purpose};
@@ -7,7 +8,7 @@ use serde::Deserialize;
 #[derive(Deserialize, Debug, Clone)]
 #[serde(rename_all = "lowercase", tag = "node_type", content = "sub_type")]
 pub enum NodeType {
-    Drone(DroneType),
+    Drone(Option<DroneType>),
     Client(ClientType),
     Server(ServerType),
 }
@@ -26,7 +27,7 @@ pub enum ServerType {
     Communication,
 }
 
-#[derive(Deserialize, Debug, Clone)]
+#[derive(Deserialize, Debug, Clone, Hash, Eq, PartialEq)]
 #[serde(rename_all = "lowercase")]
 pub enum DroneType {
     Rust,
@@ -40,6 +41,24 @@ pub enum DroneType {
     Rustbusters,
     RustyDrones,
     Skylink,
+}
+
+impl Display for DroneType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            DroneType::RustyDrones => write!(f, "Rusty Drones"),
+            DroneType::Lockheedrustin => write!(f, "Lockheed Rustin"),
+            DroneType::Rustbusters => write!(f, "Rust Busters"),
+            DroneType::Skylink => write!(f, "Sky Link"),
+            DroneType::BagelBomber => write!(f, "Bagel Bomber"),
+            DroneType::BobryWLocie => write!(f, "Bober"),
+            DroneType::RustRoveri => write!(f, "Rust Roveri"),
+            DroneType::RustDoIt => write!(f, "Rust Do It"),
+            DroneType::LedronJames => write!(f, "Ledron James"),
+            DroneType::DRONE => write!(f, "D.R.O.N.E"),
+            DroneType::Rust => write!(f, "Rust"),
+        }
+    }
 }
 
 #[derive(Deserialize)]

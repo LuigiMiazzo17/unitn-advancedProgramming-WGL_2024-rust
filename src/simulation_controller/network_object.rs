@@ -8,13 +8,14 @@ use wg_2024::packet::Packet;
 
 use crate::network::NodeCommand;
 use crate::utils::ClientType;
+use crate::utils::DroneType;
 use crate::utils::ServerType;
 
 pub struct Drone {
     id: NodeId,
     cmd_send: Sender<DroneCommand>,
     pdr: f32,
-    group_name: String,
+    group: DroneType,
     neighbours: HashSet<NodeId>,
 }
 
@@ -27,12 +28,12 @@ pub trait NetworkObject {
 }
 
 impl Drone {
-    pub fn new(id: NodeId, cmd_send: Sender<DroneCommand>, pdr: f32, group_name: String) -> Self {
+    pub fn new(id: NodeId, cmd_send: Sender<DroneCommand>, pdr: f32, group: DroneType) -> Self {
         Self {
             id,
             cmd_send,
             pdr,
-            group_name,
+            group,
             neighbours: HashSet::new(),
         }
     }
@@ -51,12 +52,16 @@ impl Drone {
         }
         if let Err(e) = self.cmd_send.send(DroneCommand::SetPacketDropRate(pdr)) {
             return Err(format!(
-                "Failed to set PDR for drone {}: {}",
-                self.group_name, e
+                "Failed to set PDR for drone-{} ({}): {}",
+                self.id, self.group, e
             ));
         };
         self.pdr = pdr;
         Ok(())
+    }
+
+    pub fn get_group(&self) -> DroneType {
+        self.group.clone()
     }
 }
 
@@ -69,7 +74,7 @@ impl NetworkObject for Drone {
         if !self.neighbours.insert(neighbour) {
             error!(
                 "Neighbour {} already exists in drone {}",
-                neighbour, self.group_name
+                neighbour, self.group
             );
         }
         self.cmd_send
@@ -86,13 +91,13 @@ impl NetworkObject for Drone {
         } else {
             Err(format!(
                 "Neighbour {} not found in drone {}",
-                connected_id, self.group_name
+                connected_id, self.group
             ))
         }
     }
 
     fn get_label(&self) -> String {
-        format!("Drone {} ({})", self.id, self.group_name)
+        format!("Drone {} ({})", self.id, self.group)
     }
 
     fn get_type_string(&self) -> String {

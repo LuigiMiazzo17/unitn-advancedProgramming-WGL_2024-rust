@@ -1,6 +1,7 @@
 use crate::network::message::{Message, Request};
 use crate::network::{ClientControlMessage, Node, NodeCommand, SimControllerMessage};
 use crate::simulation_controller::network_object::{Client, Drone, NetworkObject, Server};
+use crate::utils::DroneType;
 use crate::utils::*;
 
 use crossbeam::channel::{Receiver, Sender, unbounded};
@@ -8,11 +9,22 @@ use log::{error, info};
 use std::collections::HashMap;
 use std::thread;
 use std::thread::JoinHandle;
+
 use wg_2024::controller::{DroneCommand, DroneEvent};
 use wg_2024::drone::Drone as DroneTrait;
 use wg_2024::network::NodeId;
 use wg_2024::packet::Packet;
-use wg_2024_rust::drone::RustDrone;
+use wg_2024_rust::drone::RustDrone as Rust;
+use wg_drone_bagel_bomber::BagelBomber as BagelBomberDrone;
+use wg_drone_bobry_w_locie::drone::BoberDrone;
+use wg_drone_d_r_o_n_e::MyDrone as D_R_O_N_E_Drone;
+use wg_drone_ledron_james::Drone as LedronJamesDrone;
+use wg_drone_lockheedrustin::LockheedRustin as LockheedRustinDrone;
+use wg_drone_rust_do_it::RustDoIt as RustDoItDrone;
+use wg_drone_rust_roveri::RustRoveri as RustRoveriDrone;
+use wg_drone_rustbusters::RustBustersDrone;
+use wg_drone_rusty_drones::RustyDrone as Rusty_Drones_Drone;
+use wg_drone_skylink::SkyLinkDrone;
 
 const LOG_TARGET: &str = "simulation_controller";
 
@@ -58,9 +70,34 @@ pub struct SimulationController {
     pub packet_channels: HashMap<NodeId, Sender<Packet>>,
 }
 
+impl Default for SimulationController {
+    fn default() -> Self {
+        let (drone_event_send, drone_event_recv) = unbounded();
+        let (client_event_send, client_event_recv) = unbounded();
+
+        SimulationController {
+            drones: HashMap::new(),
+            servers: HashMap::new(),
+            clients: HashMap::new(),
+            client_event_send,
+            client_event_recv,
+            drone_event_send,
+            drone_event_recv,
+            d_handles: Vec::new(),
+            s_handles: Vec::new(),
+            c_handles: Vec::new(),
+            packet_channels: HashMap::new(),
+        }
+    }
+}
+
 impl SimulationController {
-    fn get_id(&self) -> u8 {
-        let mut id: u8 = 1;
+    pub fn new() -> Self {
+        SimulationController::default()
+    }
+
+    fn get_id(&self, preference: Option<NodeId>) -> u8 {
+        let mut id = preference.unwrap_or(0);
         while self.drones.contains_key(&id)
             || self.servers.contains_key(&id)
             || self.clients.contains_key(&id)
@@ -266,41 +303,172 @@ impl SimulationController {
         }
     }
 
+    fn choose_a_drone(
+        &self,
+        id: NodeId,
+        event_send: Sender<DroneEvent>,
+        packet_recv: Receiver<Packet>,
+        packet_send: HashMap<NodeId, Sender<Packet>>,
+        pdr: f32,
+        group: Option<DroneType>,
+    ) -> (Box<dyn DroneTrait>, Sender<DroneCommand>, DroneType) {
+        // we need to check all the drones in self.drones, and return the one who has the least
+        // occurrences of the same type
+        let (controller_send, controller_recv) = unbounded();
+
+        let group = match group {
+            Some(g) => g,
+            None => {
+                let mut drone_types_count: HashMap<DroneType, usize> = HashMap::new();
+
+                drone_types_count.insert(DroneType::RustyDrones, 0);
+                drone_types_count.insert(DroneType::BagelBomber, 0);
+                drone_types_count.insert(DroneType::BobryWLocie, 0);
+                drone_types_count.insert(DroneType::DRONE, 0);
+                drone_types_count.insert(DroneType::LedronJames, 0);
+                drone_types_count.insert(DroneType::Lockheedrustin, 0);
+                drone_types_count.insert(DroneType::RustDoIt, 0);
+                drone_types_count.insert(DroneType::Rustbusters, 0);
+                drone_types_count.insert(DroneType::RustRoveri, 0);
+                drone_types_count.insert(DroneType::Skylink, 0);
+                drone_types_count.insert(DroneType::Rust, 0);
+
+                for drone in self.drones.values() {
+                    *drone_types_count.entry(drone.get_group()).or_insert(0) += 1;
+                }
+
+                drone_types_count
+                    .iter()
+                    .min_by_key(|&(_, count)| count)
+                    .map(|(group, _)| group)
+                    .unwrap_or(&DroneType::RustyDrones)
+                    .clone()
+            }
+        };
+
+        let drone: Box<dyn DroneTrait> = match group {
+            DroneType::BagelBomber => Box::new(BagelBomberDrone::new(
+                id,
+                event_send,
+                controller_recv,
+                packet_recv,
+                packet_send,
+                pdr,
+            )),
+            DroneType::BobryWLocie => Box::new(BoberDrone::new(
+                id,
+                event_send,
+                controller_recv,
+                packet_recv,
+                packet_send,
+                pdr,
+            )),
+            DroneType::DRONE => Box::new(D_R_O_N_E_Drone::new(
+                id,
+                event_send,
+                controller_recv,
+                packet_recv,
+                packet_send,
+                pdr,
+            )),
+            DroneType::LedronJames => Box::new(LedronJamesDrone::new(
+                id,
+                event_send,
+                controller_recv,
+                packet_recv,
+                packet_send,
+                pdr,
+            )),
+            DroneType::Lockheedrustin => Box::new(LockheedRustinDrone::new(
+                id,
+                event_send,
+                controller_recv,
+                packet_recv,
+                packet_send,
+                pdr,
+            )),
+            DroneType::RustDoIt => Box::new(RustDoItDrone::new(
+                id,
+                event_send,
+                controller_recv,
+                packet_recv,
+                packet_send,
+                pdr,
+            )),
+            DroneType::Rustbusters => Box::new(RustBustersDrone::new(
+                id,
+                event_send,
+                controller_recv,
+                packet_recv,
+                packet_send,
+                pdr,
+            )),
+            DroneType::RustRoveri => Box::new(RustRoveriDrone::new(
+                id,
+                event_send,
+                controller_recv,
+                packet_recv,
+                packet_send,
+                pdr,
+            )),
+            DroneType::RustyDrones => Box::new(Rusty_Drones_Drone::new(
+                id,
+                event_send,
+                controller_recv,
+                packet_recv,
+                packet_send,
+                pdr,
+            )),
+            DroneType::Skylink => Box::new(SkyLinkDrone::new(
+                id,
+                event_send,
+                controller_recv,
+                packet_recv,
+                packet_send,
+                pdr,
+            )),
+            DroneType::Rust => Box::new(Rust::new(
+                id,
+                event_send,
+                controller_recv,
+                packet_recv,
+                packet_send,
+                pdr,
+            )),
+        };
+
+        info!(target: LOG_TARGET, "Chose drone type: {}", group);
+        (drone, controller_send, group)
+    }
+
     /// Add a new drone to the simulation
-    pub fn add_drone(&mut self) -> anyhow::Result<u8> {
-        let id = self.get_id();
-        let (controller_drone_send, controller_drone_recv) = unbounded();
+    pub fn add_drone(
+        &mut self,
+        id: Option<NodeId>,
+        group: Option<DroneType>,
+        pdr: Option<f32>,
+    ) -> anyhow::Result<u8> {
+        let id = self.get_id(id);
+        let pdr = pdr.unwrap_or(1.0);
         let node_event_send: Sender<DroneEvent> = self.drone_event_send.clone();
         // Create packet channel for the new server
         let (packet_send, packet_recv) = unbounded();
 
-        let drone = Drone::new(
-            id,
-            controller_drone_send.clone(),
-            1.0,
-            String::new(), //TODO: Set group name if needed
-        );
+        let (mut drone_obj, controller_drone_send, group) =
+            self.choose_a_drone(id, node_event_send, packet_recv, HashMap::new(), pdr, group);
 
         self.packet_channels.insert(id, packet_send);
 
         // Insert server controller before spawning thread
-        self.drones.insert(id, drone);
+        self.drones
+            .insert(id, Drone::new(id, controller_drone_send, pdr, group));
 
         self.d_handles
             .push(
                 thread::Builder::new()
                     .name(format!("drone{}", id))
                     .spawn(move || {
-                        let mut drone = RustDrone::new(
-                            id,
-                            node_event_send,
-                            controller_drone_recv,
-                            packet_recv,
-                            HashMap::new(),
-                            1.0,
-                        );
-
-                        drone.run();
+                        drone_obj.run();
                     })?,
             );
 
@@ -308,8 +476,12 @@ impl SimulationController {
     }
 
     /// Add a new server to the simulation
-    pub fn add_server(&mut self, server_type: ServerType) -> anyhow::Result<u8> {
-        let id = self.get_id();
+    pub fn add_server(
+        &mut self,
+        id: Option<NodeId>,
+        server_type: ServerType,
+    ) -> anyhow::Result<u8> {
+        let id = self.get_id(id);
         let (controller_server_send, controller_server_recv) = unbounded();
 
         // Create packet channel for the new server
@@ -350,8 +522,12 @@ impl SimulationController {
         Ok(id) // Return the ID of the newly created server
     }
 
-    pub fn add_client(&mut self, client_type: ClientType) -> anyhow::Result<u8> {
-        let id = self.get_id();
+    pub fn add_client(
+        &mut self,
+        id: Option<NodeId>,
+        client_type: ClientType,
+    ) -> anyhow::Result<u8> {
+        let id = self.get_id(id);
         let (controller_client_send, controller_client_recv) = unbounded();
 
         // Create packet channel for the new server
