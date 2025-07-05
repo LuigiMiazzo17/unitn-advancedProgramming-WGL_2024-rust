@@ -1,20 +1,24 @@
-use crossbeam::channel::{Receiver, Sender, unbounded};
+use crossbeam::channel::{Sender, unbounded};
 use log::debug;
 use std::collections::HashMap;
 use std::fs;
 use std::thread;
+use wg_2024::packet::Packet;
 
-use crate::network::ClientControlMessage;
 use crate::network::Node;
-use crate::network::NodeCommand;
 use crate::network_initializer::config::Config;
+use crate::simulation_controller::{
+    SimulationController,
+    network_object::{
+        Client as SimCntClient, Drone as SimCntDrone, NetworkObject, Server as SimCntServer,
+    },
+};
+use crate::utils::ClientType;
+use crate::utils::ServerType;
 
 use wg_2024_rust::drone::RustDrone;
 
-use wg_2024::controller::{DroneCommand, DroneEvent};
 use wg_2024::drone::Drone;
-use wg_2024::network::NodeId;
-use wg_2024::packet::Packet;
 
 pub fn parse_config(file: &str) -> anyhow::Result<Config> {
     let file_str = fs::read_to_string(file)?;
@@ -24,26 +28,13 @@ pub fn parse_config(file: &str) -> anyhow::Result<Config> {
 }
 
 #[allow(clippy::type_complexity)]
-pub fn spawn_network(
-    config: Config,
-) -> anyhow::Result<(
-    HashMap<NodeId, Sender<DroneCommand>>,
-    HashMap<NodeId, Sender<NodeCommand>>,
-    HashMap<NodeId, Sender<NodeCommand>>,
-    Receiver<ClientControlMessage>,
-    Sender<DroneEvent>,
-    Receiver<DroneEvent>,
-    Vec<thread::JoinHandle<()>>,
-    Vec<thread::JoinHandle<()>>,
-    Vec<thread::JoinHandle<()>>,
-    HashMap<NodeId, (Sender<Packet>, Receiver<Packet>)>,
-)> {
-    let mut controller_drones: HashMap<u8, Sender<DroneCommand>> = HashMap::new();
-    let (node_event_send, node_event_recv) = unbounded();
+pub fn spawn_network(config: Config) -> anyhow::Result<SimulationController> {
+    let mut drones = HashMap::new();
+    let (drone_event_send, drone_event_recv) = unbounded();
 
-    let mut controller_server = HashMap::new();
-    let mut controller_client = HashMap::new();
-    let (client_controller_send, client_controller_recv) = unbounded();
+    let mut servers = HashMap::new();
+    let mut clients = HashMap::new();
+    let (client_event_send, client_event_recv) = unbounded();
 
     let mut packet_channels = HashMap::new();
     for drone in config.drone.iter() {
@@ -57,144 +48,149 @@ pub fn spawn_network(
     }
 
     let mut d_handles = Vec::new();
-    for drone in config.drone.into_iter() {
-        // controller
-        // controller_drone_send is used to send commands to the drone
-        // controller_drone_recv is used by the drone to receive commands from the controller
+    for drone_cfg in config.drone.into_iter() {
         let (controller_drone_send, controller_drone_recv) = unbounded();
-        controller_drones.insert(drone.id, controller_drone_send);
 
-        // node_event_send is used by the drone to send commands to the controller
-        // node_event_recv is used by the controller to receive commands by the drone
-        let node_event_send = node_event_send.clone();
-        // packet
-        // packet_recv is used by the drone to receive packets from other nodes
-        // packet_send is a map of connected node IDs to their respective packet senders
-        let packet_recv = packet_channels[&drone.id].1.clone();
-        let packet_send = drone
-            .connected_node_ids
-            .into_iter()
-            .map(|id| (id, packet_channels[&id].0.clone()))
-            .collect();
+        let node_event_send = drone_event_send.clone();
+        let packet_recv = packet_channels[&drone_cfg.id].1.clone();
 
         d_handles.push(
             thread::Builder::new()
-                .name(format!("drone{}", drone.id))
+                .name(format!("drone{}", drone_cfg.id))
                 .spawn(move || {
-                    let mut drone = RustDrone::new(
-                        drone.id,
+                    let mut d = RustDrone::new(
+                        drone_cfg.id,
                         node_event_send,
                         controller_drone_recv,
                         packet_recv,
-                        packet_send,
-                        drone.pdr,
+                        HashMap::new(),
+                        drone_cfg.pdr,
                     );
 
-                    drone.run();
+                    d.run();
                 })?,
         );
+
+        let mut drone = SimCntDrone::new(
+            controller_drone_send,
+            drone_cfg.pdr,
+            "".to_string(), //TODO: Figure out this
+        );
+
+        for connected_id in drone_cfg.connected_node_ids {
+            drone.add_neighbour(connected_id, packet_channels[&connected_id].0.clone());
+        }
+
+        drones.insert(drone_cfg.id, drone);
     }
 
     let mut s_handles = Vec::new();
-    for server in config.server.into_iter() {
+    for server_cfg in config.server.into_iter() {
         // controller
         let (controller_server_send, controller_server_recv) = unbounded();
         // packet
-        let packet_recv = packet_channels[&server.id].1.clone();
+        let packet_recv = packet_channels[&server_cfg.id].1.clone();
+        let server_type = match server_cfg.server_type.as_str() {
+            "Content" => ServerType::Content,
+            "Communication" => ServerType::Communication,
+            _ => panic!("Unknown server type: {}", server_cfg.server_type),
+        };
+        let server_type_clone = server_type.clone();
 
         s_handles.push(
             thread::Builder::new()
-                .name(format!("server{}", server.id))
+                .name(format!("server{}", server_cfg.id))
                 .spawn(move || {
-                    let mut server = if server.server_type == "Content" {
-                        Node::new_content_server(
-                            server.id,
+                    let mut server = match server_type_clone {
+                        ServerType::Content => Node::new_content_server(
+                            server_cfg.id,
                             controller_server_recv,
                             packet_recv,
-                            server.base_path,
-                        )
-                    } else if server.server_type == "Communication" {
-                        Node::new_communication_server(
-                            server.id,
+                            server_cfg.base_path,
+                        ),
+                        ServerType::Communication => Node::new_communication_server(
+                            server_cfg.id,
                             controller_server_recv,
                             packet_recv,
-                            server.base_path,
-                        )
-                    } else {
-                        panic!("Unknown server type: {}", server.server_type);
+                            server_cfg.base_path,
+                        ),
                     };
 
                     server.run();
                 })?,
         );
 
-        for connected_id in server.connected_drone_ids.iter() {
-            controller_server_send
-                .send(NodeCommand::AddNeighbour((
-                    *connected_id,
-                    packet_channels[connected_id].0.clone(),
-                )))
-                .unwrap();
+        let mut server = SimCntServer::new(controller_server_send, server_type);
+
+        for connected_id in server_cfg.connected_drone_ids.iter() {
+            server.add_neighbour(*connected_id, packet_channels[connected_id].0.clone());
         }
 
-        controller_server.insert(server.id, controller_server_send);
+        servers.insert(server_cfg.id, server);
     }
 
     let mut c_handles = Vec::new();
-    for client in config.client.into_iter() {
+    for client_cfg in config.client.into_iter() {
         // controller
         let (controller_client_send, controller_client_recv) = unbounded();
         // packet
-        let packet_recv = packet_channels[&client.id].1.clone();
-        let client_controller_send = client_controller_send.clone();
+        let packet_recv = packet_channels[&client_cfg.id].1.clone();
+        let client_controller_send = client_event_send.clone();
+        let client_type = match client_cfg.client_type.as_str() {
+            "ChatClient" => ClientType::Chat,
+            "WebBrowser" => ClientType::Web,
+            _ => panic!("Unknown client type: {}", client_cfg.client_type),
+        };
+        let client_type_clone = client_type.clone();
 
         c_handles.push(
             thread::Builder::new()
-                .name(format!("client{}", client.id))
+                .name(format!("client{}", client_cfg.id))
                 .spawn(move || {
-                    let mut client = if client.client_type == "ChatClient" {
-                        Node::new_chat_client(
-                            client.id,
+                    let mut client = match client_type_clone {
+                        ClientType::Chat => Node::new_chat_client(
+                            client_cfg.id,
                             controller_client_recv,
                             packet_recv,
                             client_controller_send,
-                        )
-                    } else if client.client_type == "WebBrowser" {
-                        Node::new_browser_client(
-                            client.id,
+                        ),
+                        ClientType::Web => Node::new_browser_client(
+                            client_cfg.id,
                             controller_client_recv,
                             packet_recv,
                             client_controller_send,
-                        )
-                    } else {
-                        panic!("Unknown client type: {}", client.client_type);
+                        ),
                     };
 
                     client.run();
                 })?,
         );
 
-        for connected_id in client.connected_drone_ids.iter() {
-            controller_client_send
-                .send(NodeCommand::AddNeighbour((
-                    *connected_id,
-                    packet_channels[connected_id].0.clone(),
-                )))
-                .unwrap();
+        let mut client = SimCntClient::new(controller_client_send, client_type);
+
+        for connected_id in client_cfg.connected_drone_ids.iter() {
+            client.add_neighbour(*connected_id, packet_channels[connected_id].0.clone());
         }
 
-        controller_client.insert(client.id, controller_client_send);
+        clients.insert(client_cfg.id, client);
     }
-    Ok((
-        controller_drones,
-        controller_server,
-        controller_client,
-        client_controller_recv,
-        node_event_send,
-        node_event_recv,
+
+    let packet_channels = packet_channels
+        .into_iter()
+        .map(|(id, (send, _))| (id, (send)))
+        .collect::<HashMap<u8, Sender<Packet>>>();
+
+    Ok(SimulationController {
+        drones,
+        servers,
+        clients,
+        client_event_send,
+        client_event_recv,
+        drone_event_send,
+        drone_event_recv,
         d_handles,
         s_handles,
         c_handles,
         packet_channels,
-    ))
+    })
 }

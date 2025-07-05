@@ -1,16 +1,20 @@
 use crate::network::message::{Message, Request};
-use crate::network::{Node, NodeCommand, SimControllerMessage};
+use crate::network::{ClientControlMessage, Node, NodeCommand, SimControllerMessage};
+use crate::simulation_controller::network_object::{Client, Drone, NetworkObject, Server};
 use crate::utils::*;
+
 use crossbeam::channel::{Receiver, Sender, unbounded};
-use log::{info, warn};
+use log::{error, info, warn};
 use std::collections::HashMap;
 use std::thread;
 use std::thread::JoinHandle;
 use wg_2024::controller::{DroneCommand, DroneEvent};
-use wg_2024::drone::Drone;
+use wg_2024::drone::Drone as DroneTrait;
 use wg_2024::network::NodeId;
 use wg_2024::packet::Packet;
 use wg_2024_rust::drone::RustDrone;
+
+const LOG_TARGET: &str = "simulation_controller";
 
 /// Central simulation controller that manages all network nodes and their communication channels.
 ///
@@ -21,10 +25,19 @@ use wg_2024_rust::drone::RustDrone;
 /// Thread handles (`d_handles`, `s_handles`) allow graceful shutdown of spawned node threads.
 pub struct SimulationController {
     /// Commands from controller to drones - HashMap<NodeId, Sender<DroneCommand>>
-    pub drones: HashMap<NodeId, Sender<DroneCommand>>,
+    pub drones: HashMap<NodeId, Drone>,
 
-    /// Commands from controller to servers - HashMap<NodeId, Sender<NodeCommand>>  
-    pub servers: HashMap<NodeId, Sender<NodeCommand>>,
+    /// Commands from controller to servers - HashMap<NodeId, Sender<NodeCommand>
+    pub servers: HashMap<NodeId, Server>,
+
+    /// Commands from controller to clients - HashMap<NodeId, Sender<NodeCommand>
+    pub clients: HashMap<NodeId, Client>,
+
+    // Events from clients to controller - Sender<ClientControlMessage>
+    pub client_event_send: Sender<ClientControlMessage>,
+
+    // Events from clients to controller - Sender<ClientControlMessage>
+    pub client_event_recv: Receiver<ClientControlMessage>,
 
     /// Events from drones to controller - Sender<DroneEvent>
     pub drone_event_send: Sender<DroneEvent>,
@@ -35,101 +48,100 @@ pub struct SimulationController {
     /// Thread handles for spawned drone processes
     pub d_handles: Vec<JoinHandle<()>>,
 
-    /// Thread handles for spawned server processes  
+    /// Thread handles for spawned server processes
     pub s_handles: Vec<JoinHandle<()>>,
 
-    /// Thread handles for spawned server processes  
+    /// Thread handles for spawned client processes
     pub c_handles: Vec<JoinHandle<()>>,
 
     /// Packet channels for communication with nodes - HashMap<NodeId, (Sender<Packet>, Receiver<Packet>)>
-    pub packet_channels: HashMap<NodeId, (Sender<Packet>, Receiver<Packet>)>,
-
-    /// Log target for the simulation controller
-    pub log_target: String,
+    pub packet_channels: HashMap<NodeId, Sender<Packet>>,
 }
 
 impl SimulationController {
     fn get_id(&self) -> u8 {
         let mut id: u8 = 1;
-        while self.drones.contains_key(&id) || self.servers.contains_key(&id) {
+        while self.drones.contains_key(&id)
+            || self.servers.contains_key(&id)
+            || self.clients.contains_key(&id)
+        {
             id += 1;
         }
         id
     }
+
     pub fn crash_all(&mut self) -> anyhow::Result<()> {
-        for (_, sender) in self.drones.iter() {
-            sender.send(DroneCommand::Crash)?;
+        for (_, drone) in self.drones.iter() {
+            drone.get_cmd_send().send(DroneCommand::Crash)?;
         }
         Ok(())
     }
 
-    /// Get a reference to a drone's command sender
-    pub fn get_drone(&self, id: &NodeId) -> Option<&Sender<DroneCommand>> {
-        self.drones.get(id)
-    }
-
-    /// Get a reference to a server's command sender
-    pub fn get_server(&self, id: &NodeId) -> Option<&Sender<NodeCommand>> {
-        self.servers.get(id)
-    }
-
     pub fn send_message(&self, id1: NodeId, id2: NodeId) -> anyhow::Result<()> {
-        info!(target: &self.log_target, "Sending message from {} to {}", id1, id2);
+        info!(target: LOG_TARGET, "Sending message from {} to {}", id1, id2);
         self.servers
             .get(&id1)
             .unwrap()
+            .get_cmd_send()
             .send(NodeCommand::SendMessage(
                 SimControllerMessage::SendMessageToPeer(id2, Message::Request(Request::ServerType)),
             ))?;
         Ok(())
     }
 
-    pub fn add_edge(&mut self, from: NodeId, to: NodeId) -> anyhow::Result<()> {
-        match self.servers.get(&from) {
-            Some(sender) => {
-                sender.send(NodeCommand::AddNeighbour((
-                    to,
-                    self.packet_channels[&to].0.clone(),
-                )))?;
+    fn get_net_obj_from_id_mut(&mut self, id: NodeId) -> Option<&mut dyn NetworkObject> {
+        if let Some(drone) = self.drones.get_mut(&id) {
+            Some(drone)
+        } else if let Some(server) = self.servers.get_mut(&id) {
+            Some(server)
+        } else if let Some(client) = self.clients.get_mut(&id) {
+            Some(client)
+        } else {
+            None
+        }
+    }
+
+    fn get_packet_sender(&self, id: NodeId) -> Option<Sender<Packet>> {
+        self.packet_channels.get(&id).cloned()
+    }
+
+    pub fn add_edge(&mut self, from_id: NodeId, to_id: NodeId) -> Result<(), String> {
+        info!(target: LOG_TARGET, "Adding edge from {} to {}", from_id, to_id);
+
+        if from_id == to_id {
+            error!(target: LOG_TARGET, "Cannot add edge from node {} to itself!", from_id);
+            return Err(format!("Cannot add edge from node {} to itself!", from_id));
+        }
+
+        let from_pkg_sender = self.get_packet_sender(from_id);
+        let to_pkg_sender = self.get_packet_sender(to_id);
+
+        match (from_pkg_sender, to_pkg_sender) {
+            (Some(from_pkg_sender), Some(to_pkg_sender)) => {
+                self.get_net_obj_from_id_mut(from_id)
+                    .unwrap()
+                    .add_neighbour(to_id, to_pkg_sender);
+                self.get_net_obj_from_id_mut(to_id)
+                    .unwrap()
+                    .add_neighbour(from_id, from_pkg_sender);
+                Ok(())
             }
-            None => {
-                warn!(target: &self.log_target, "Server {} not found", from);
+            (Some(_), None) => {
+                error!(target: LOG_TARGET, "Node with ID {} not found!", to_id);
+                Err(format!("Node with ID {} not found!", from_id))
+            }
+            (None, Some(_)) => {
+                error!(target: LOG_TARGET, "Node with ID {} not found!", to_id);
+                Err(format!("Node with ID {} not found!", to_id))
+            }
+            (None, None) => {
+                error!(target: LOG_TARGET, "Nodes with IDs {} and {} not found!", from_id, to_id);
+                Err(format!(
+                    "Nodes with IDs {} and {} not found!",
+                    from_id, to_id
+                ))
             }
         }
-        match self.drones.get(&from) {
-            Some(sender) => {
-                sender.send(DroneCommand::AddSender(
-                    to,
-                    self.packet_channels[&to].0.clone(),
-                ))?;
-            }
-            None => {
-                warn!(target: &self.log_target, "Drone {} not found", from);
-            }
-        }
-        match self.servers.get(&to) {
-            Some(sender) => {
-                sender.send(NodeCommand::AddNeighbour((
-                    from,
-                    self.packet_channels[&from].0.clone(),
-                )))?;
-            }
-            None => {
-                warn!(target: &self.log_target, "Server {} not found", to);
-            }
-        }
-        match self.drones.get(&to) {
-            Some(sender) => {
-                sender.send(DroneCommand::AddSender(
-                    from,
-                    self.packet_channels[&from].0.clone(),
-                ))?;
-            }
-            None => {
-                warn!(target: &self.log_target, "Drone {} not found", to);
-            }
-        }
-        Ok(())
     }
 
     /// Add a new drone to the simulation
@@ -139,11 +151,17 @@ impl SimulationController {
         let node_event_send: Sender<DroneEvent> = self.drone_event_send.clone();
         // Create packet channel for the new server
         let (packet_send, packet_recv) = unbounded();
-        self.packet_channels
-            .insert(id, (packet_send, packet_recv.clone()));
+
+        let drone = Drone::new(
+            controller_drone_send.clone(),
+            1.0,
+            String::new(), //TODO: Set group name if needed
+        );
+
+        self.packet_channels.insert(id, packet_send);
 
         // Insert server controller before spawning thread
-        self.drones.insert(id, controller_drone_send);
+        self.drones.insert(id, drone);
 
         self.d_handles
             .push(
@@ -156,7 +174,7 @@ impl SimulationController {
                             controller_drone_recv,
                             packet_recv,
                             HashMap::new(),
-                            0.0, // Example PDR value, can be adjusted
+                            1.0,
                         );
 
                         drone.run();
@@ -173,38 +191,36 @@ impl SimulationController {
 
         // Create packet channel for the new server
         let (packet_send, packet_recv) = unbounded();
-        self.packet_channels
-            .insert(id, (packet_send, packet_recv.clone()));
+        self.packet_channels.insert(id, packet_send);
 
         // Insert server controller before spawning thread
-        self.servers.insert(id, controller_server_send);
+        self.servers
+            .insert(id, Server::new(controller_server_send, server_type.clone()));
 
         self.s_handles
-            .push(
-                thread::Builder::new()
-                    .name(format!("server{}", id))
-                    .spawn(move || {
-                        let mut server = match server_type {
-                            ServerType::Communication => Node::new_communication_server(
-                                id,
-                                controller_server_recv,
-                                packet_recv,
-                                String::from("/tmp/rust"),
-                            ),
-                            _ => {
-                                info!(target: "simulation_controller", "Creating content server with ID: {}", id);
-                                Node::new_content_server(
-                                    id,
-                                    controller_server_recv,
-                                    packet_recv,
-                                    String::from("/tmp/rust"),
-                                )
-                            }
-                        };
+            .push(thread::Builder::new().name(format!("server{}", id)).spawn(
+            move || {
+                let mut server = match server_type {
+                    ServerType::Communication => Node::new_communication_server(
+                        id,
+                        controller_server_recv,
+                        packet_recv,
+                        String::from("/tmp/rust"),
+                    ),
+                    _ => {
+                        info!(target: LOG_TARGET, "Creating content server with ID: {}", id);
+                        Node::new_content_server(
+                            id,
+                            controller_server_recv,
+                            packet_recv,
+                            String::from("/tmp/rust"),
+                        )
+                    }
+                };
 
-                        server.run();
-                    })?,
-            );
+                server.run();
+            },
+        )?);
 
         Ok(id) // Return the ID of the newly created server
     }

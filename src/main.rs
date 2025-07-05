@@ -1,8 +1,11 @@
 use axum::http::StatusCode;
-use log::{debug, error, info};
+use log::{debug, error, info, trace};
+use std::collections::HashSet;
 use std::fs;
 use unitn_advancedProgramming_WGL_2024_rust::network_initializer::{parse_config, spawn_network};
-use unitn_advancedProgramming_WGL_2024_rust::simulation_controller::SimulationController;
+use unitn_advancedProgramming_WGL_2024_rust::simulation_controller::{
+    SimulationController, network_object::NetworkObject,
+};
 
 use axum::{
     extract::{State, rejection::JsonRejection},
@@ -21,80 +24,89 @@ struct AppState {
     simulation_controller: Arc<Mutex<SimulationController>>,
 }
 
-async fn get_topology() -> Json<Value> {
+async fn get_topology(State(state): State<AppState>) -> Json<Value> {
     // Try to parse the actual config file
-    match parse_config("examples/config/base.toml") {
-        Ok(config) => {
-            let mut nodes = Vec::new();
-            let mut edges = Vec::new();
+    let controller = state.simulation_controller.lock().unwrap();
+    trace!("Fetching topology from simulation controller");
 
-            // Add drones
-            for drone in &config.drone {
-                nodes.push(json!({
-                    "data": {
-                        "id": format!("{}", drone.id),
-                        "label": format!("Drone {}", drone.id),
-                        "type": "drone"
-                    }
-                }));
+    let mut nodes = Vec::new();
+    let mut edges = Vec::new();
+    let mut edges_json = Vec::new();
 
-                // Add edges from drone to connected nodes
-                for connected_id in &drone.connected_node_ids {
-                    edges.push(json!({
-                        "data": {
-                            "id": format!("{}-{}", drone.id, connected_id),
-                            "source": format!("{}", drone.id),
-                            "target": format!("{}", connected_id)
-                        }
-                    }));
-                }
+    for (id, drone) in &controller.drones {
+        nodes.push(json!({
+            "data": {
+                "id": format!("{}", id),
+                "label": format!("Drone {}", id),
+                "type": "drone"
             }
+        }));
 
-            // Add servers
-            for server in &config.server {
-                nodes.push(json!({
-                    "data": {
-                        "id": format!("{}", server.id),
-                        "label": format!("Server {} ({})", server.id, server.server_type),
-                        "type": "server"
-                    }
-                }));
-            }
-
-            // Add clients
-            for client in &config.client {
-                nodes.push(json!({
-                    "data": {
-                        "id": format!("{}", client.id),
-                        "label": format!("Client {}", client.id),
-                        "type": "client"
-                    }
-                }));
-
-                // // Add edges from client to connected drones
-                // for drone_id in &client.connected_drone_ids {
-                //     edges.push(json!({
-                //         "data": {
-                //             "id": format!("edge_{}_{}", client.id, drone_id),
-                //             "source": format!("client_{}", client.id),
-                //             "target": format!("drone_{}", drone_id)
-                //         }
-                //     }));
-                // }
-            }
-
-            Json(json!({
-                "nodes": nodes,
-                "edges": edges
-            }))
-        }
-        Err(_) => {
-            // Fallback sample data if config file not found
-            Json(json!({
-                "error": {"ERROR": "Config file not found"},
-            }))
+        // Add edges from drone to connected nodes
+        for connected_id in drone.get_neighbours() {
+            edges.push((id, connected_id));
         }
     }
+
+    for (id, server) in &controller.servers {
+        nodes.push(json!({
+            "data": {
+                "id": format!("{}", id),
+                "label": format!("Server {}", id),
+                "type": "server"
+            }
+        }));
+
+        // Add edges from server to connected drones
+        for connected_id in server.get_neighbours() {
+            edges.push((id, connected_id));
+        }
+    }
+
+    for (id, client) in &controller.clients {
+        nodes.push(json!({
+            "data": {
+                "id": format!("{}", id),
+                "label": format!("Client {}", id),
+                "type": "client"
+            }
+        }));
+
+        // Add edges from client to connected drones
+        for connected_id in client.get_neighbours() {
+            edges.push((id, connected_id));
+        }
+    }
+
+    // Cleanup edges removing duplicates, considering that edges are bidirectional
+    for &(src, dest) in &edges {
+        if !edges.contains(&(dest, src)) {
+            panic!("Edge from {} to {} exists but not the reverse", src, dest);
+        }
+    }
+
+    let mut unique = HashSet::new();
+    for &(a, b) in &edges {
+        let normalized = if a < b { (a, b) } else { (b, a) };
+        unique.insert(normalized);
+    }
+
+    let edges: Vec<_> = unique.into_iter().collect();
+
+    for &(src, dest) in &edges {
+        edges_json.push(json!({
+            "data": {
+                "id": format!("{}-{}", src, dest),
+                "source": format!("{}", src),
+                "target": format!("{}", dest)
+            }
+        }));
+    }
+
+    Json(json!({
+        "nodes": nodes,
+        "edges": edges_json
+    }))
 }
 
 async fn get_nodes() -> Json<Value> {
@@ -184,55 +196,27 @@ async fn send_message(State(state): State<AppState>, Json(edge): Json<Edge>) -> 
     // Access the simulation controller
     let controller = state.simulation_controller.lock().unwrap();
     match controller.send_message(edge.from_id, edge.to_id) {
-        Ok(()) => {
-            return (
-                StatusCode::OK,
-                Json(json!({
-                    "message": format!("Message sent from {} to {}", edge.from_id, edge.to_id)
-                })),
-            );
-        }
-        Err(e) => {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(json!({
-                    "error": format!("Failed to send message: {}", e)
-                })),
-            );
-        }
+        Ok(()) => (
+            StatusCode::OK,
+            Json(json!({
+                "message": format!("Message sent from {} to {}", edge.from_id, edge.to_id)
+            })),
+        ),
+        Err(e) => (
+            StatusCode::BAD_REQUEST,
+            Json(json!({
+                "error": format!("Failed to send message: {}", e)
+            })),
+        ),
     }
 }
 
 async fn add_edge(State(state): State<AppState>, Json(edge): Json<Edge>) -> impl IntoResponse {
-    debug!("Adding edge from {} to {}", edge.from_id, edge.to_id);
+    info!("Adding edge from {} to {}", edge.from_id, edge.to_id);
     // Access the simulation controller
     let mut controller = state.simulation_controller.lock().unwrap();
 
-    // Check if both nodes exist
-    let from_exists = controller.drones.contains_key(&edge.from_id)
-        || controller.servers.contains_key(&edge.to_id);
-    let to_exists = controller.drones.contains_key(&edge.from_id)
-        || controller.servers.contains_key(&edge.to_id);
-
-    if !from_exists {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(json!({
-                "error": format!("Source node {} does not exist", edge.from_id)
-            })),
-        );
-    }
-
-    if !to_exists {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(json!({
-                "error": format!("Target node {} does not exist", edge.to_id)
-            })),
-        );
-    }
-
-    // Actually add the edge
+    // Add the edge
     match controller.add_edge(edge.from_id, edge.to_id) {
         Ok(()) => (
             StatusCode::CREATED,
@@ -316,38 +300,16 @@ async fn main() -> anyhow::Result<()> {
 
     let config = parse_config("examples/config/base.toml")?;
 
-    let (
-        controller_drones,
-        controller_server,
-        controller_client,
-        client_controller_recv,
-        node_event_send,
-        node_event_recv,
-        mut d_handles,
-        mut s_handles,
-        mut c_handles,
-        packet_channels,
-    ) = spawn_network(config)?;
+    let simulation_controller = spawn_network(config)?;
 
     // Create the simulation controller with all network state
-    let simulation_controller = SimulationController {
-        drones: controller_drones,
-        servers: controller_server,
-        drone_event_send: node_event_send,
-        drone_event_recv: node_event_recv,
-        d_handles,
-        s_handles,
-        c_handles,
-        packet_channels,
-        log_target: "simulation_controller".to_string(),
-    };
 
     let app_state: AppState = AppState {
         simulation_controller: Arc::new(Mutex::new(simulation_controller)),
     };
 
     let app = Router::new()
-        .route("/api/topoogy", get(get_topology))
+        .route("/api/topology", get(get_topology))
         .route("/api/nodes", get(get_nodes).post(add_node))
         .route("/api/edges", post(add_edge))
         .route("/api/messages", post(send_message))
