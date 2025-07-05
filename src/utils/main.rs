@@ -48,6 +48,11 @@ pub struct Edge {
     pub to_id: u8,
 }
 
+#[derive(Deserialize)]
+pub struct Pdr {
+    pub pdr: f32,
+}
+
 // Convert drone dependency name to display name
 // e.g., "wg_drone_bobry_w_locie" -> "Bobry W Locie"
 pub fn format_drone_name(dep_name: &str) -> String {
@@ -156,4 +161,3 @@ pub fn image_to_base64(file_path: &str) -> Option<String> {
 
 //     Ok(())
 // }
-

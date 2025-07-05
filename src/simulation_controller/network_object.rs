@@ -40,6 +40,24 @@ impl Drone {
     pub fn get_cmd_send(&self) -> &Sender<DroneCommand> {
         &self.cmd_send
     }
+
+    pub fn get_pdr(&self) -> f32 {
+        self.pdr
+    }
+
+    pub fn set_pdr(&mut self, pdr: f32) -> Result<(), String> {
+        if !(0.0..=1.0).contains(&pdr) {
+            return Err(format!("Invalid PDR value: {}", pdr));
+        }
+        if let Err(e) = self.cmd_send.send(DroneCommand::SetPacketDropRate(pdr)) {
+            return Err(format!(
+                "Failed to set PDR for drone {}: {}",
+                self.group_name, e
+            ));
+        };
+        self.pdr = pdr;
+        Ok(())
+    }
 }
 
 impl NetworkObject for Drone {

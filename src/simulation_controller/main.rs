@@ -193,7 +193,7 @@ impl SimulationController {
     pub fn get_node_data(
         &self,
         id: NodeId,
-    ) -> Result<(String, Vec<(NodeId, String, String)>, Option<f32>), String> {
+    ) -> Result<(String, String, Vec<(NodeId, String, String)>, Option<f32>), String> {
         let node = self.get_net_obj_from_id(id);
 
         if let Some(node) = node {
@@ -210,7 +210,12 @@ impl SimulationController {
                 .collect();
             let label = node.get_label();
 
-            Ok((label, neighbours, None))
+            Ok((
+                label,
+                node.get_type_string(),
+                neighbours,
+                self.drones.get(&id).map(|d| d.get_pdr()),
+            ))
         } else {
             error!(target: LOG_TARGET, "Node with ID {} not found!", id);
             Err(format!("Node with ID {} not found!", id))
@@ -386,5 +391,19 @@ impl SimulationController {
         )?);
 
         Ok(id) // Return the ID of the newly created server
+    }
+
+    pub fn set_pdr(&mut self, id: NodeId, pdr: f32) -> Result<(), String> {
+        if let Some(drone) = self.drones.get_mut(&id) {
+            if let Err(e) = drone.set_pdr(pdr) {
+                error!(target: LOG_TARGET, "Failed to set PDR for drone {}: {}", id, e);
+                Err(format!("Failed to set PDR for drone {}: {}", id, e))
+            } else {
+                Ok(())
+            }
+        } else {
+            error!(target: LOG_TARGET, "Drone with ID {} not found!", id);
+            Err(format!("Drone with ID {} not found!", id))
+        }
     }
 }

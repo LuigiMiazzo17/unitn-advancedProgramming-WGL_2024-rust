@@ -10,7 +10,7 @@ use unitn_advancedProgramming_WGL_2024_rust::simulation_controller::{
 use axum::{
     extract::{Path, State, rejection::JsonRejection},
     response::{IntoResponse, Json},
-    routing::{Router, get, post},
+    routing::{Router, get, patch, post},
 };
 use serde_json::{Value, json};
 use std::sync::{Arc, Mutex};
@@ -197,15 +197,27 @@ async fn get_node(State(state): State<AppState>, Path(id): Path<u8>) -> impl Int
     let controller = state.simulation_controller.lock().unwrap();
 
     match controller.get_node_data(id) {
-        Ok((label, neighbours, _)) => {
+        Ok((label, node_type, neighbours, pdr)) => {
             let neighbours: Vec<Value> = neighbours
                 .into_iter()
                 .map(|(id, label, n_type)| json!({ "id": id, "label": label, "type": n_type }))
                 .collect();
-            let node_json = json!({
+            let mut node_json = json!({
                 "label": label,
+                "type": node_type,
                 "neighbours": neighbours,
             });
+            match pdr {
+                Some(pdr_value) => {
+                    node_json
+                        .as_object_mut()
+                        .unwrap()
+                        .insert("packet_drop_rate".to_string(), pdr_value.into());
+                }
+                None => {
+                    debug!("No PDR data available for node {}", id);
+                }
+            }
             (StatusCode::OK, Json(node_json))
         }
         Err(e) => {
@@ -215,6 +227,32 @@ async fn get_node(State(state): State<AppState>, Path(id): Path<u8>) -> impl Int
                 Json(json!({ "error": format!("Node with ID {} not found", id) })),
             )
         }
+    }
+}
+
+async fn set_pdr(
+    State(state): State<AppState>,
+    Path(id): Path<u8>,
+    Json(pdr): Json<Pdr>,
+) -> impl IntoResponse {
+    info!("Setting PDR for node with ID: {}", id);
+    // Access the simulation controller
+    let mut controller = state.simulation_controller.lock().unwrap();
+
+    // Set the PDR for the node
+    match controller.set_pdr(id, pdr.pdr) {
+        Ok(()) => (
+            StatusCode::OK,
+            Json(json!({
+                "message": format!("PDR set for node {}", id)
+            })),
+        ),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({
+                "error": format!("Failed to set PDR for node {}: {}", id, e)
+            })),
+        ),
     }
 }
 
@@ -383,6 +421,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/topology", get(get_topology))
         .route("/api/nodes", get(get_nodes).post(add_node))
         .route("/api/node/{id}", get(get_node).delete(delete_node))
+        .route("/api/drone/{id}/pdr", patch(set_pdr))
         .route("/api/edges", post(add_edge).delete(delete_edge))
         .route("/api/messages", post(send_message))
         .with_state(app_state)
