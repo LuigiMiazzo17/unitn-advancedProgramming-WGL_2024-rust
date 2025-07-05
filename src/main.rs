@@ -1,19 +1,14 @@
-use std::thread;
-use std::time::Duration;
-
 use axum::http::StatusCode;
+use log::{debug, error, info};
 use std::fs;
 use unitn_advancedProgramming_WGL_2024_rust::network_initializer::{parse_config, spawn_network};
-use unitn_advancedProgramming_WGL_2024_rust::server::ContentServer;
 use unitn_advancedProgramming_WGL_2024_rust::simulation_controller::SimulationController;
 
 use axum::{
-    extract::{Json as ExtractJson, State, rejection::JsonRejection},
+    extract::{State, rejection::JsonRejection},
     response::{IntoResponse, Json},
     routing::{Router, get, post},
 };
-use bincode::de;
-use log::debug;
 use serde_json::{Value, json};
 use std::sync::{Arc, Mutex};
 use tokio::net::TcpListener;
@@ -131,12 +126,11 @@ async fn get_nodes() -> Json<Value> {
                             "type": "drone",
                             "image": drone_image
                         }));
-                        println!("Rust");
                         for (dep_name, _) in dependencies {
                             if dep_name.starts_with("wg_drone_") {
                                 // Convert drone name to PascalCase display name
                                 let display_name = format_drone_name(dep_name);
-                                println!("{}", display_name);
+                                info!("Found drone dependency: {}", display_name);
                                 nodes.push(json!({
                                     "name": display_name,
                                     "type": "drone",
@@ -147,12 +141,12 @@ async fn get_nodes() -> Json<Value> {
                     }
                 }
                 Err(e) => {
-                    println!("Error parsing Cargo.toml: {}", e);
+                    error!("Error parsing Cargo.toml: {}", e);
                 }
             }
         }
         Err(e) => {
-            println!("Error reading Cargo.toml: {}", e);
+            error!("Error reading Cargo.toml: {}", e);
         }
     }
 
@@ -215,10 +209,10 @@ async fn add_edge(State(state): State<AppState>, Json(edge): Json<Edge>) -> impl
     let mut controller = state.simulation_controller.lock().unwrap();
 
     // Check if both nodes exist
-    let from_exists =
-        controller.drones.contains_key(&edge.from_id) || controller.servers.contains_key(&edge.to_id);
-    let to_exists =
-        controller.drones.contains_key(&edge.from_id) || controller.servers.contains_key(&edge.to_id);
+    let from_exists = controller.drones.contains_key(&edge.from_id)
+        || controller.servers.contains_key(&edge.to_id);
+    let to_exists = controller.drones.contains_key(&edge.from_id)
+        || controller.servers.contains_key(&edge.to_id);
 
     if !from_exists {
         return (
@@ -250,7 +244,7 @@ async fn add_edge(State(state): State<AppState>, Json(edge): Json<Edge>) -> impl
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(json!({
                 "error": format!("Failed to add edge: {}", e)
-            }))
+            })),
         ),
     }
 }
@@ -263,9 +257,12 @@ async fn add_node(
     let node_type = match payload {
         Ok(Json(node_type)) => node_type,
         Err(err) => {
-            return (StatusCode::BAD_REQUEST, Json(json!({
-                "error": format!("Invalid JSON: {}", err)
-            })));
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({
+                    "error": format!("Invalid JSON: {}", err)
+                })),
+            );
         }
     };
 
@@ -308,7 +305,7 @@ async fn add_node(
             StatusCode::OK,
             Json(json!({
                 "message": format!("Client of type '{:?}' is not supported yet", client_type)
-            }))
+            })),
         ),
     }
 }
@@ -340,7 +337,9 @@ async fn main() -> anyhow::Result<()> {
         drone_event_recv: node_event_recv,
         d_handles,
         s_handles,
+        c_handles,
         packet_channels,
+        log_target: "simulation_controller".to_string(),
     };
 
     let app_state: AppState = AppState {
@@ -348,7 +347,7 @@ async fn main() -> anyhow::Result<()> {
     };
 
     let app = Router::new()
-        .route("/api/topology", get(get_topology))
+        .route("/api/topoogy", get(get_topology))
         .route("/api/nodes", get(get_nodes).post(add_node))
         .route("/api/edges", post(add_edge))
         .route("/api/messages", post(send_message))
@@ -356,7 +355,7 @@ async fn main() -> anyhow::Result<()> {
         .fallback_service(ServeDir::new("./dist").append_index_html_on_directories(true));
 
     let listener = TcpListener::bind("0.0.0.0:3000").await.unwrap();
-    println!("Server running on http://0.0.0.0:3000");
+    info!("Server running on http://0.0.0.0:3000");
     axum::serve(listener, app).await.unwrap();
     Ok(())
 }

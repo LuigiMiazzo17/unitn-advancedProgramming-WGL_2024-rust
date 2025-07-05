@@ -1,3 +1,4 @@
+use log::error;
 use std::fs;
 
 use base64::{Engine as _, engine::general_purpose};
@@ -22,7 +23,7 @@ pub enum ClientType {
 #[serde(rename_all = "lowercase")]
 pub enum ServerType {
     Content,
-    Communication
+    Communication,
 }
 
 #[derive(Deserialize, Debug, Clone)]
@@ -38,7 +39,7 @@ pub enum DroneType {
     RustRoveri,
     Rustbusters,
     RustyDrones,
-    Skylink
+    Skylink,
 }
 
 #[derive(Deserialize)]
@@ -60,7 +61,10 @@ pub fn format_drone_name(dep_name: &str) -> String {
                     let mut chars = word.chars();
                     match chars.next() {
                         None => String::new(),
-                        Some(first) => first.to_uppercase().collect::<String>() + &chars.as_str().to_lowercase(),
+                        Some(first) => {
+                            first.to_uppercase().collect::<String>()
+                                + &chars.as_str().to_lowercase()
+                        }
                     }
                 }
             })
@@ -88,7 +92,7 @@ pub fn image_to_base64(file_path: &str) -> Option<String> {
             Some(format!("data:{};base64,{}", mime_type, base64_data))
         }
         Err(e) => {
-            println!("Error reading image {}: {}", file_path, e);
+            error!("Failed to read image file {}: {}", file_path, e);
             None
         }
     }
@@ -127,7 +131,7 @@ pub fn image_to_base64(file_path: &str) -> Option<String> {
 //             SimControllerMessage::SendMessageToPeer(
 //                 10,
 //                 Message::Request(Request::ServerType))))?;
-    
+
 //     // controller_server
 //     //     .get(&10)
 //     //     .unwrap()
@@ -152,3 +156,4 @@ pub fn image_to_base64(file_path: &str) -> Option<String> {
 
 //     Ok(())
 // }
+
