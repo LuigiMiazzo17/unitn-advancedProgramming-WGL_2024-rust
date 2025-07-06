@@ -186,6 +186,13 @@ impl Server {
     pub fn get_server_type(&self) -> ServerType {
         self.server_type.clone()
     }
+
+    pub fn get_subtype_string(&self) -> String {
+        match self.server_type {
+            ServerType::Communication => "communication".to_string(),
+            ServerType::Content => "content".to_string(),
+        }
+    }
 }
 
 impl NetworkObject for Server {
@@ -252,6 +259,13 @@ impl Client {
 
     pub fn get_client_type(&self) -> ClientType {
         self.client_type.clone()
+    }
+
+    pub fn get_subtype_string(&self) -> String {
+        match self.client_type {
+            ClientType::Web => "web".to_string(),
+            ClientType::Chat => "chat".to_string(),
+        }
     }
 }
 

@@ -69,6 +69,7 @@ pub struct NodeData {
     pub neighbours: Vec<(NodeId, String, String)>,
     pub pdr: Option<f32>,
     pub stats: Option<(u32, u32)>,
+    pub subtype: Option<String>,
 }
 
 #[derive(Deserialize)]

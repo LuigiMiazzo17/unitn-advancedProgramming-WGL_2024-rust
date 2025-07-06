@@ -4,13 +4,16 @@ use axum::{
     response::{IntoResponse, Json},
     routing::{Router, get, patch, post},
 };
-use log::{debug, error, info, trace};
+use log::{debug, error, info, trace, warn};
 use serde_json::{Value, json};
 use std::collections::HashSet;
 use std::fs;
 use std::sync::{Arc, Mutex};
 use tokio::net::TcpListener;
 use tower_http::services::ServeDir;
+use unitn_advancedProgramming_WGL_2024_rust::network::message::{
+    ChatRequest, CreateChatRequest, Request,
+};
 use unitn_advancedProgramming_WGL_2024_rust::simulation_controller::{
     SimulationController, network_object::NetworkObject,
 };
@@ -214,6 +217,7 @@ async fn get_node(State(state): State<AppState>, Path(id): Path<u8>) -> impl Int
             let mut node_json = json!({
                 "label": node_data.label,
                 "type": node_data.node_type,
+                "subtype": node_data.subtype,
                 "neighbours": neighbours,
             });
             match node_data.pdr {
@@ -265,23 +269,167 @@ async fn set_pdr(
     }
 }
 
-async fn send_message(State(state): State<AppState>, Json(edge): Json<Edge>) -> impl IntoResponse {
-    debug!("Sending message from {} to {}", edge.from_id, edge.to_id);
+fn gimme_request(msg_type: &str, payload: &Value) -> Result<Request, String> {
+    match msg_type {
+        "join" => {
+            let chat_id: u64 = payload
+                .get("id")
+                .and_then(|v| v.as_u64())
+                .ok_or_else(|| "Missing or invalid chat_id".to_string())?;
+            let password: Option<String> = payload
+                .get("password")
+                .and_then(|v| v.as_str())
+                .map(|s| Some(s.to_string()))
+                .unwrap_or(None);
+            Ok(Request::ChatRequest(ChatRequest::Join(chat_id, password)))
+        }
+        "leave" => {
+            let chat_id: u64 = payload
+                .get("id")
+                .and_then(|v| v.as_u64())
+                .ok_or_else(|| "Missing or invalid chat_id".to_string())?;
+            Ok(Request::ChatRequest(ChatRequest::Leave(chat_id)))
+        }
+        "send-message" => {
+            let chat_id: u64 = payload
+                .get("id")
+                .and_then(|v| v.as_u64())
+                .ok_or_else(|| "Missing or invalid chat_id".to_string())?;
+            let message: String = payload
+                .get("message")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+                .ok_or_else(|| "Missing or invalid message".to_string())?;
+            Ok(Request::ChatRequest(ChatRequest::SendMessage(
+                chat_id, message,
+            )))
+        }
+        "create" => {
+            let name: String = payload
+                .get("name")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+                .ok_or_else(|| "Missing or invalid chat_name".to_string())?;
+            let public: bool = payload
+                .get("public")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(true);
+            let password: Option<String> = payload
+                .get("password")
+                .and_then(|v| v.as_str())
+                .map(|s| Some(s.to_string()))
+                .unwrap_or(None);
+            Ok(Request::ChatRequest(ChatRequest::Create(
+                CreateChatRequest {
+                    name,
+                    public,
+                    password,
+                },
+            )))
+        }
+        "delete" => {
+            let chat_id: u64 = payload
+                .get("id")
+                .and_then(|v| v.as_u64())
+                .ok_or_else(|| "Missing or invalid chat_id".to_string())?;
+            Ok(Request::ChatRequest(ChatRequest::Delete(chat_id)))
+        }
+        "get-chats" => Ok(Request::ChatRequest(ChatRequest::GetChats)),
+        "get-messages" => {
+            let chat_id: u64 = payload
+                .get("id")
+                .and_then(|v| v.as_u64())
+                .ok_or_else(|| "Missing or invalid chat_id".to_string())?;
+            Ok(Request::ChatRequest(ChatRequest::GetMessages(chat_id)))
+        }
+        _ => Err(format!("Unsupported message type: {}", msg_type)),
+    }
+}
+
+async fn send_message(
+    State(state): State<AppState>,
+    Path(req): Path<String>,
+    Json(payload): Json<Value>,
+) -> impl IntoResponse {
+    info!("Sending message of type: {}", req);
     // Access the simulation controller
     let controller = state.simulation_controller.lock().unwrap();
-    match controller.send_message(edge.from_id, edge.to_id) {
+
+    let from_id: u64 = match payload.get("from_id").and_then(|v| v.as_u64()) {
+        Some(id) => id,
+        None => {
+            warn!("Missing or invalid from_id in payload: {:?}", payload);
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({
+                    "error": "Missing or invalid from_id"
+                })),
+            );
+        }
+    };
+    let to_id: u64 = match payload.get("to_id").and_then(|v| v.as_u64()) {
+        Some(id) => id,
+        None => {
+            warn!("Missing or invalid to_id in payload: {:?}", payload);
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({
+                    "error": "Missing or invalid to_id"
+                })),
+            );
+        }
+    };
+
+    if !(0..255).contains(&from_id) {
+        warn!("Invalid from_id: {}", from_id);
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({
+                "error": format!("Invalid from_id: {}", from_id)
+            })),
+        );
+    }
+    let from_id = from_id as u8;
+    if !(0..255).contains(&to_id) {
+        warn!("Invalid to_id: {}", to_id);
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({
+                "error": format!("Invalid to_id: {}", to_id)
+            })),
+        );
+    }
+    let to_id = to_id as u8;
+
+    let request = match gimme_request(&req, &payload) {
+        Ok(req) => req,
+        Err(e) => {
+            warn!("Failed to parse request: {}", e);
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({
+                    "error": format!("Invalid request: {}", e)
+                })),
+            );
+        }
+    };
+
+    match controller.send_request(from_id, to_id, request) {
         Ok(()) => (
             StatusCode::OK,
             Json(json!({
-                "message": format!("Message sent from {} to {}", edge.from_id, edge.to_id)
+                "message": format!("Message sent from {} to {}", from_id, to_id)
             })),
         ),
-        Err(e) => (
-            StatusCode::BAD_REQUEST,
-            Json(json!({
-                "error": format!("Failed to send message: {}", e)
-            })),
-        ),
+        Err(e) => {
+            error!("Failed to send message: {}", e);
+            (
+                StatusCode::BAD_REQUEST,
+                Json(json!({
+                    "error": format!("Failed to send message: {}", e)
+                })),
+            )
+        }
     }
 }
 
@@ -479,7 +627,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/node/{id}", get(get_node).delete(delete_node))
         .route("/api/drone/{id}/pdr", patch(set_pdr))
         .route("/api/edges", post(add_edge).delete(delete_edge))
-        .route("/api/messages", post(send_message))
+        .route("/api/messages/{req}", post(send_message))
         .route(
             "/api/configurations",
             get(get_configurations).post(change_configuration),

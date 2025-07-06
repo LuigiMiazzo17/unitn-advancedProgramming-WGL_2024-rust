@@ -241,15 +241,19 @@ impl SimulationController {
         Ok(())
     }
 
-    pub fn send_message(&self, id1: NodeId, id2: NodeId) -> anyhow::Result<()> {
+    pub fn send_request(&self, id1: NodeId, id2: NodeId, request: Request) -> anyhow::Result<()> {
         info!(target: LOG_TARGET, "Sending message from {} to {}", id1, id2);
-        self.servers
-            .get(&id1)
-            .unwrap()
-            .get_cmd_send()
-            .send(NodeCommand::SendMessage(
-                SimControllerMessage::SendMessageToPeer(id2, Message::Request(Request::ServerType)),
-            ))?;
+        let client = match self.clients.get(&id1) {
+            Some(client) => client,
+            None => {
+                error!(target: LOG_TARGET, "Client with ID {} not found!", id1);
+                return Err(anyhow::anyhow!("Client with ID {} not found!", id1));
+            }
+        };
+
+        client.get_cmd_send().send(NodeCommand::SendMessage(
+            SimControllerMessage::SendMessageToPeer(id2, Message::Request(request)),
+        ))?;
         Ok(())
     }
 
@@ -378,6 +382,11 @@ impl SimulationController {
             } else {
                 (None, None)
             };
+            let subtype = if let Some(s) = self.servers.get_mut(&id) {
+                Some(s.get_subtype_string())
+            } else {
+                self.clients.get_mut(&id).map(|c| c.get_subtype_string())
+            };
 
             Ok(NodeData {
                 label,
@@ -385,6 +394,7 @@ impl SimulationController {
                 neighbours,
                 pdr,
                 stats,
+                subtype,
             })
         } else {
             error!(target: LOG_TARGET, "Node with ID {} not found!", id);
