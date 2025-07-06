@@ -659,7 +659,7 @@ async fn get_messages(State(state): State<AppState>, Path(id): Path<u8>) -> impl
     let mut controller = state.simulation_controller.lock().unwrap();
 
     match controller.get_messages(id) {
-        Ok(messages) => {
+        Ok((v, messages)) => {
             let mut messages_json = Vec::new();
             for msg in messages {
                 let message_json = json!({
@@ -673,7 +673,11 @@ async fn get_messages(State(state): State<AppState>, Path(id): Path<u8>) -> impl
             if messages_json.is_empty() {
                 debug!("No messages found for node {}", id);
             }
-            (StatusCode::OK, Json(json!(messages_json)))
+            let json = json!({
+                "messages": messages_json,
+                "version": v,
+            });
+            (StatusCode::OK, Json(json!(json)))
         }
         Err(e) => {
             error!("Failed to fetch messages: {}", e);

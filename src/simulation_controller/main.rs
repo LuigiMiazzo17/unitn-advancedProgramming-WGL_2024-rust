@@ -774,7 +774,7 @@ impl SimulationController {
         deserializable_configurations
     }
 
-    pub fn get_messages(&mut self, id: u8) -> Result<Vec<ResponseFromNetwork>, String> {
+    pub fn get_messages(&mut self, id: u8) -> Result<(u64, Vec<ResponseFromNetwork>), String> {
         let mut messages = Vec::new();
 
         while let Ok(message) = self.client_event_recv.try_recv() {
