@@ -1,9 +1,10 @@
 use log::error;
 use std::fmt::Display;
 use std::fs;
+use wg_2024::network::NodeId;
 
 use base64::{Engine as _, engine::general_purpose};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 #[derive(Deserialize, Debug, Clone)]
 #[serde(rename_all = "lowercase", tag = "node_type", content = "sub_type")]
@@ -62,6 +63,14 @@ impl Display for DroneType {
 }
 
 #[derive(Deserialize)]
+pub struct NodeData {
+    pub label: String,
+    pub node_type: String,
+    pub neighbours: Vec<(NodeId, String, String)>,
+    pub pdr: Option<f32>,
+}
+
+#[derive(Deserialize)]
 pub struct Edge {
     pub from_id: u8,
     pub to_id: u8,
@@ -70,6 +79,14 @@ pub struct Edge {
 #[derive(Deserialize)]
 pub struct Pdr {
     pub pdr: f32,
+}
+
+#[derive(Serialize)]
+pub struct Configuration {
+    pub id: u8,
+    pub name: String,
+    pub description: String,
+    pub is_active: bool,
 }
 
 // Convert drone dependency name to display name

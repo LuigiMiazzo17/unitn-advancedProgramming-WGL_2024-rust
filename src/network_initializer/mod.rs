@@ -1,4 +1,3 @@
 mod config;
-mod main;
 
-pub use main::*;
+pub use config::*;

@@ -1,0 +1,5 @@
+[[configuration]]
+id = 1
+name = "Base Configuration"
+file_name = "base.toml"
+description = "Base configuration for the drone network simulation"

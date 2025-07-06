@@ -1,14 +1,15 @@
 use crate::network::message::{Message, Request};
 use crate::network::{ClientControlMessage, Node, NodeCommand, SimControllerMessage};
+use crate::network_initializer::Config;
+use crate::network_initializer::{CONFIGURATIONS_DIR, MAIN_CONFIG_FILE};
 use crate::simulation_controller::network_object::{Client, Drone, NetworkObject, Server};
-use crate::utils::DroneType;
 use crate::utils::*;
 
 use crossbeam::channel::{Receiver, Sender, unbounded};
-use log::{error, info};
-use std::collections::HashMap;
-use std::thread;
+use log::{debug, error, info};
+use std::collections::{HashMap, HashSet};
 use std::thread::JoinHandle;
+use std::{fs, thread};
 
 use wg_2024::controller::{DroneCommand, DroneEvent};
 use wg_2024::drone::Drone as DroneTrait;
@@ -66,16 +67,19 @@ pub struct SimulationController {
     /// Thread handles for spawned client processes
     pub c_handles: Vec<JoinHandle<()>>,
 
-    /// Packet channels for communication with nodes - HashMap<NodeId, (Sender<Packet>, Receiver<Packet>)>
+    /// Packet channels for communication with nodes - HashMap<NodeId, Sender<Packet>>
     pub packet_channels: HashMap<NodeId, Sender<Packet>>,
+
+    /// Active configuration
+    active_configuration: u8,
 }
 
-impl Default for SimulationController {
-    fn default() -> Self {
+impl SimulationController {
+    pub fn new(config_id: u8) -> Result<Self, String> {
         let (drone_event_send, drone_event_recv) = unbounded();
         let (client_event_send, client_event_recv) = unbounded();
 
-        SimulationController {
+        let mut sim = Self {
             drones: HashMap::new(),
             servers: HashMap::new(),
             clients: HashMap::new(),
@@ -87,13 +91,148 @@ impl Default for SimulationController {
             s_handles: Vec::new(),
             c_handles: Vec::new(),
             packet_channels: HashMap::new(),
-        }
-    }
-}
+            active_configuration: config_id,
+        };
 
-impl SimulationController {
-    pub fn new() -> Self {
-        SimulationController::default()
+        sim.spawn_network_from_config(config_id)?;
+
+        Ok(sim)
+    }
+
+    fn destroy_netowrk(&mut self) -> Result<(), String> {
+        for (id, drone) in self.drones.iter_mut() {
+            if let Err(e) = drone.get_cmd_send().send(DroneCommand::Crash) {
+                error!(target: LOG_TARGET, "Failed to crash drone {}: {}", id, e);
+                return Err(format!("Failed to crash drone {}: {}", id, e));
+            }
+        }
+
+        for (id, server) in self.servers.iter_mut() {
+            if let Err(e) = server.get_cmd_send().send(NodeCommand::Quit) {
+                error!(target: LOG_TARGET, "Failed to quit server {}: {}", id, e);
+                return Err(format!("Failed to quit server {}: {}", id, e));
+            }
+        }
+
+        for (id, client) in self.clients.iter_mut() {
+            if let Err(e) = client.get_cmd_send().send(NodeCommand::Quit) {
+                error!(target: LOG_TARGET, "Failed to quit client {}: {}", id, e);
+                return Err(format!("Failed to quit client {}: {}", id, e));
+            }
+        }
+
+        let combined_handles = self
+            .d_handles
+            .drain(..)
+            .chain(self.s_handles.drain(..))
+            .chain(self.c_handles.drain(..))
+            .collect::<Vec<JoinHandle<()>>>();
+
+        for d_handle in combined_handles.into_iter() {
+            if let Err(e) = d_handle.join() {
+                error!(target: LOG_TARGET, "Failed to join drone thread: {:?}", e);
+                return Err(format!("Failed to join thread: {:?}", e));
+            }
+        }
+
+        self.packet_channels.clear();
+
+        Ok(())
+    }
+
+    pub fn spawn_network_from_config(&mut self, id: u8) -> Result<(), String> {
+        if let Err(e) = self.destroy_netowrk() {
+            error!(target: LOG_TARGET, "Failed to destroy existing network: {}", e);
+            return Err(format!("Failed to destroy existing network: {}", e));
+        }
+
+        fn safe_edge_add(hs: &mut HashSet<(NodeId, NodeId)>, edge: (NodeId, NodeId)) {
+            if hs.contains(&(edge.1, edge.0)) {
+                debug!(target: LOG_TARGET, "Edge {:?} already exists, skipping.", edge);
+            } else {
+                hs.insert(edge);
+            }
+        }
+
+        let configurations = self.get_available_configurations();
+        let path = match configurations.configuration.iter().find(|c| c.id == id) {
+            Some(config) => {
+                format!("{}{}", CONFIGURATIONS_DIR, config.file_name)
+            }
+            None => {
+                error!(target: LOG_TARGET, "Configuration with ID {} not found!", id);
+                return Err(format!("Configuration with ID {} not found!", id));
+            }
+        };
+
+        let file_str = match fs::read_to_string(path) {
+            Ok(content) => content,
+            Err(e) => {
+                error!(target: LOG_TARGET, "Failed to read configuration file: {}", e);
+                return Err(format!("Failed to read configuration file: {}", e));
+            }
+        };
+        let config: Config = match toml::from_str(&file_str) {
+            Ok(config) => config,
+            Err(e) => {
+                error!(target: LOG_TARGET, "Failed to parse configuration file: {}", e);
+                return Err(format!("Failed to parse configuration file: {}", e));
+            }
+        };
+
+        let mut edges = HashSet::new();
+        for drone_cfg in config.drone.into_iter() {
+            if let Err(e) = self.add_drone(Some(drone_cfg.id), None, Some(drone_cfg.pdr)) {
+                error!(target: LOG_TARGET, "Failed to add drone {}: {}", drone_cfg.id, e);
+                return Err(format!("Failed to add drone {}: {}", drone_cfg.id, e));
+            }
+            for connected_id in drone_cfg.connected_node_ids.into_iter() {
+                safe_edge_add(&mut edges, (drone_cfg.id, connected_id));
+            }
+        }
+
+        for server_cfg in config.server.into_iter() {
+            let server_type = match server_cfg.server_type.as_str() {
+                "Content" => ServerType::Content,
+                "Communication" => ServerType::Communication,
+                _ => panic!("Unknown server type: {}", server_cfg.server_type),
+            };
+
+            if let Err(e) = self.add_server(Some(server_cfg.id), server_type) {
+                error!(target: LOG_TARGET, "Failed to add server {}: {}", server_cfg.id, e);
+                return Err(format!("Failed to add server {}: {}", server_cfg.id, e));
+            }
+
+            for connected_id in server_cfg.connected_drone_ids.into_iter() {
+                safe_edge_add(&mut edges, (server_cfg.id, connected_id));
+            }
+        }
+
+        for client_cfg in config.client.into_iter() {
+            let client_type = match client_cfg.client_type.as_str() {
+                "ChatClient" => ClientType::Chat,
+                "WebBrowser" => ClientType::Web,
+                _ => panic!("Unknown client type: {}", client_cfg.client_type),
+            };
+
+            if let Err(e) = self.add_client(Some(client_cfg.id), client_type) {
+                error!(target: LOG_TARGET, "Failed to add client {}: {}", client_cfg.id, e);
+                return Err(format!("Failed to add client {}: {}", client_cfg.id, e));
+            }
+
+            for connected_id in client_cfg.connected_drone_ids.into_iter() {
+                safe_edge_add(&mut edges, (client_cfg.id, connected_id));
+            }
+        }
+
+        for edge in edges.into_iter() {
+            if let Err(e) = self.add_edge(edge.0, edge.1) {
+                debug!("Failed to add edge {:?}: {}", edge, e);
+                return Err(format!("Failed to add edge {:?}: {}", edge, e));
+            }
+        }
+
+        Ok(())
     }
 
     fn get_id(&self, preference: Option<NodeId>) -> u8 {
@@ -227,10 +366,7 @@ impl SimulationController {
         }
     }
 
-    pub fn get_node_data(
-        &self,
-        id: NodeId,
-    ) -> Result<(String, String, Vec<(NodeId, String, String)>, Option<f32>), String> {
+    pub fn get_node_data(&self, id: NodeId) -> Result<NodeData, String> {
         let node = self.get_net_obj_from_id(id);
 
         if let Some(node) = node {
@@ -247,12 +383,12 @@ impl SimulationController {
                 .collect();
             let label = node.get_label();
 
-            Ok((
+            Ok(NodeData {
                 label,
-                node.get_type_string(),
+                node_type: node.get_type_string(),
                 neighbours,
-                self.drones.get(&id).map(|d| d.get_pdr()),
-            ))
+                pdr: self.drones.get(&id).map(|d| d.get_pdr()),
+            })
         } else {
             error!(target: LOG_TARGET, "Node with ID {} not found!", id);
             Err(format!("Node with ID {} not found!", id))
@@ -581,5 +717,41 @@ impl SimulationController {
             error!(target: LOG_TARGET, "Drone with ID {} not found!", id);
             Err(format!("Drone with ID {} not found!", id))
         }
+    }
+
+    fn get_available_configurations(&self) -> crate::network_initializer::Configurations {
+        let file_str = match fs::read_to_string(MAIN_CONFIG_FILE) {
+            Ok(content) => content,
+            Err(e) => {
+                error!(target: LOG_TARGET, "Failed to read configuration file: {}", e);
+                panic!("Failed to read configuration file: {}", e);
+            }
+        };
+
+        let conf: Result<crate::network_initializer::Configurations, _> = toml::from_str(&file_str);
+        match conf {
+            Ok(config) => config,
+            Err(e) => {
+                error!(target: LOG_TARGET, "Failed to parse configuration file: {}", e);
+                panic!("Failed to parse configuration file: {}", e);
+            }
+        }
+    }
+
+    pub fn get_deserializable_configurations(&self) -> Vec<crate::utils::Configuration> {
+        let conf = self.get_available_configurations();
+
+        let mut deserializable_configurations = Vec::new();
+        for configuration in conf.configuration {
+            deserializable_configurations.push(crate::utils::Configuration {
+                is_active: configuration.id == self.active_configuration,
+                id: configuration.id,
+                name: configuration.name,
+                description: configuration.description,
+            });
+        }
+
+        info!(target: LOG_TARGET, "Loaded {} configurations", deserializable_configurations.len());
+        deserializable_configurations
     }
 }

@@ -2,7 +2,6 @@ use axum::http::StatusCode;
 use log::{debug, error, info, trace};
 use std::collections::HashSet;
 use std::fs;
-use unitn_advancedProgramming_WGL_2024_rust::network_initializer::{parse_config, spawn_network};
 use unitn_advancedProgramming_WGL_2024_rust::simulation_controller::{
     SimulationController, network_object::NetworkObject,
 };
@@ -197,17 +196,18 @@ async fn get_node(State(state): State<AppState>, Path(id): Path<u8>) -> impl Int
     let controller = state.simulation_controller.lock().unwrap();
 
     match controller.get_node_data(id) {
-        Ok((label, node_type, neighbours, pdr)) => {
-            let neighbours: Vec<Value> = neighbours
+        Ok(node_data) => {
+            let neighbours: Vec<Value> = node_data
+                .neighbours
                 .into_iter()
                 .map(|(id, label, n_type)| json!({ "id": id, "label": label, "type": n_type }))
                 .collect();
             let mut node_json = json!({
-                "label": label,
-                "type": node_type,
+                "label": node_data.label,
+                "type": node_data.node_type,
                 "neighbours": neighbours,
             });
-            match pdr {
+            match node_data.pdr {
                 Some(pdr_value) => {
                     node_json
                         .as_object_mut()
@@ -414,13 +414,30 @@ async fn add_node(
     }
 }
 
+async fn get_configurations(State(state): State<AppState>) -> impl IntoResponse {
+    let controller = state.simulation_controller.lock().unwrap();
+    let configurations = controller.get_deserializable_configurations();
+
+    (StatusCode::OK, Json(json!(configurations)))
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     env_logger::init();
 
-    let config = parse_config("examples/config/base.toml")?;
-
-    let simulation_controller = spawn_network(config)?;
+    let simulation_controller = match SimulationController::new(1) {
+        Ok(controller) => {
+            info!("Simulation controller initialized successfully");
+            controller
+        }
+        Err(e) => {
+            error!("Failed to initialize simulation controller: {}", e);
+            return Err(anyhow::anyhow!(
+                "Failed to initialize simulation controller: {}",
+                e
+            ));
+        }
+    };
 
     // Create the simulation controller with all network state
 
@@ -435,6 +452,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/drone/{id}/pdr", patch(set_pdr))
         .route("/api/edges", post(add_edge).delete(delete_edge))
         .route("/api/messages", post(send_message))
+        .route("/api/configurations", get(get_configurations))
         .with_state(app_state)
         .fallback_service(ServeDir::new("./dist").append_index_html_on_directories(true));
 
