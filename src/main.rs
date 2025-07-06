@@ -4,7 +4,7 @@ use axum::{
     response::{IntoResponse, Json},
     routing::{Router, get, patch, post},
 };
-use log::{debug, error, info, trace, warn};
+use log::{Level, debug, error, info, trace, warn};
 use serde_json::{Value, json};
 use std::collections::HashSet;
 use std::fs;
@@ -18,12 +18,46 @@ use unitn_advancedProgramming_WGL_2024_rust::simulation_controller::{
     SimulationController, network_object::NetworkObject,
 };
 use unitn_advancedProgramming_WGL_2024_rust::utils::*;
-use unitn_advancedProgramming_WGL_2024_rust::utils::{ClientType, ServerType};
+use unitn_advancedProgramming_WGL_2024_rust::utils::{
+    ClientType, ServerType,
+    logger::{self, InMemoryLogger},
+};
 
 // Shared state structure - wraps the simulation controller for thread-safe access
 #[derive(Clone)]
 struct AppState {
     simulation_controller: Arc<Mutex<SimulationController>>,
+    logger: &'static InMemoryLogger,
+}
+
+async fn get_logs(
+    State(state): State<AppState>,
+    query: axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Json<Value> {
+    let logs = state.logger.get_logs();
+    let level_filter = query.get("level").map(|l| l.to_lowercase());
+
+    let filtered_logs: Vec<_> = logs
+        .into_iter()
+        .filter(|log| {
+            if let Some(ref level_str) = level_filter {
+                let filter_level = match level_str.as_str() {
+                    "trace" => Level::Trace,
+                    "debug" => Level::Debug,
+                    "info" => Level::Info,
+                    "warn" => Level::Warn,
+                    "error" => Level::Error,
+                    _ => return false, // Should not happen with valid frontend input
+                };
+                log.level <= filter_level
+            } else {
+                true
+            }
+        })
+        .map(|log| json!({"level": log.level.to_string(), "message": log.message}))
+        .collect();
+
+    Json(json!(filtered_logs))
 }
 
 async fn get_topology(State(state): State<AppState>) -> Json<Value> {
@@ -631,9 +665,13 @@ async fn get_messages(State(state): State<AppState>, Path(id): Path<u8>) -> impl
     }
 }
 
+use std::sync::LazyLock;
+
+static LOGGER: LazyLock<InMemoryLogger> = LazyLock::new(InMemoryLogger::new);
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    env_logger::init();
+    logger::init(&LOGGER).expect("Failed to initialize logger");
 
     let simulation_controller = match SimulationController::new(1) {
         Ok(controller) => {
@@ -653,6 +691,7 @@ async fn main() -> anyhow::Result<()> {
 
     let app_state: AppState = AppState {
         simulation_controller: Arc::new(Mutex::new(simulation_controller)),
+        logger: &LOGGER,
     };
 
     let app = Router::new()
@@ -667,6 +706,7 @@ async fn main() -> anyhow::Result<()> {
             "/api/configurations",
             get(get_configurations).post(change_configuration),
         )
+        .route("/api/logs", get(get_logs))
         .with_state(app_state)
         .fallback_service(ServeDir::new("./dist").append_index_html_on_directories(true));
 

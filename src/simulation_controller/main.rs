@@ -37,7 +37,7 @@ const LOG_TARGET: &str = "simulation_controller";
 /// - **Commands to nodes**: `drones` and `servers` contain senders for sending commands from controller to nodes
 /// - **Events from nodes**: `drone_event_recv` receives events/responses from drones back to controller
 ///
-/// Thread handles (`d_handles`, `s_handles`) allow graceful shutdown of spawned node threads.
+/// Thread handles (`d_handles`, `s_handles`, `c_handles`) allow graceful shutdown of spawned node threads.
 pub struct SimulationController {
     /// Commands from controller to drones - HashMap<NodeId, Sender<DroneCommand>>
     pub drones: HashMap<NodeId, Drone>,
@@ -612,6 +612,7 @@ impl SimulationController {
             Drone::new(id, controller_drone_send, pdr, event_recv, group),
         );
 
+        info!(target: LOG_TARGET, "Creating drone with ID: {}", id);
         self.d_handles
             .push(
                 thread::Builder::new()
@@ -647,13 +648,15 @@ impl SimulationController {
             .push(thread::Builder::new().name(format!("server{}", id)).spawn(
             move || {
                 let mut server = match server_type {
-                    ServerType::Communication => Node::new_communication_server(
+                    ServerType::Communication => {
+                        info!(target: LOG_TARGET, "Creating communication server with ID: {}", id);
+                        Node::new_communication_server(
                         id,
                         controller_server_recv,
                         packet_recv,
                         String::from("/tmp/rust"),
-                    ),
-                    _ => {
+                    )}
+                    ServerType::Content => {
                         info!(target: LOG_TARGET, "Creating content server with ID: {}", id);
                         Node::new_content_server(
                             id,
@@ -694,14 +697,17 @@ impl SimulationController {
             .push(thread::Builder::new().name(format!("client{}", id)).spawn(
             move || {
                 let mut client = match client_type {
-                    ClientType::Web => Node::new_browser_client(
-                        id,
-                        controller_client_recv,
-                        packet_recv,
-                        client_event_send,
-                    ),
-                    _ => {
-                        info!(target: LOG_TARGET, "Creating content server with ID: {}", id);
+                    ClientType::Web => {
+                        info!(target: LOG_TARGET, "Creating web browser client with ID: {}", id);
+                        Node::new_browser_client(
+                            id,
+                            controller_client_recv,
+                            packet_recv,
+                            client_event_send,
+                        )
+                    }
+                    ClientType::Chat => {
+                        info!(target: LOG_TARGET, "Creating chat client with ID: {}", id);
                         Node::new_chat_client(
                             id,
                             controller_client_recv,

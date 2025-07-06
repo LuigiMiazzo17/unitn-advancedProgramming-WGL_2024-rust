@@ -9,7 +9,7 @@ connected_node_ids = [10, 20, 100]
 pdr = 0.8
 
 [[drone]]
-id = 2
+id = 3
 connected_node_ids = [10, 20, 100]
 pdr = 0.9
 
