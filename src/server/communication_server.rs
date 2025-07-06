@@ -46,7 +46,7 @@ impl NodeTrait for CommunicationServer {
                         ChatRequest::SendMessage(chat_id, message) => {
                             self.add_message_to_chat(chat_id, peer_id, message)
                         }
-                        ChatRequest::GetChats => self.get_chats(),
+                        ChatRequest::GetChats => self.get_chats(peer_id),
                         ChatRequest::GetMessages(chat_id) => self.get_chat_messages(chat_id),
                     })
                 }
@@ -127,8 +127,8 @@ impl CommunicationServer {
         Response::ServerType(ServerType::Communication)
     }
 
-    fn get_chats(&self) -> Response {
-        let chats = self
+    fn get_chats(&self, peer_id: NodeId) -> Response {
+        let mut chats: Vec<ChatResponseMessage> = self
             .chats
             .iter()
             .filter(|(_, chat)| chat.public)
@@ -137,6 +137,19 @@ impl CommunicationServer {
                 name: chat.name.clone(),
             })
             .collect();
+
+        dbg!("{:?}", &chats);
+
+        // add also private chats for registered peers
+        for (id, chat) in &self.chats {
+            if chat.registered_peers.contains(&peer_id) && !chat.public {
+                chats.push(ChatResponseMessage {
+                    id: *id,
+                    name: chat.name.clone(),
+                });
+            }
+        }
+
         Response::ChatResponse(ChatResponse::Chats(chats))
     }
 

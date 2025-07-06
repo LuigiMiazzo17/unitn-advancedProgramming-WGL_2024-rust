@@ -346,8 +346,8 @@ fn gimme_request(msg_type: &str, payload: &Value) -> Result<Request, String> {
         }
         "create" => {
             let name = get_string(payload, "name")?;
-            let public: bool = payload
-                .get("public")
+            let public: bool = !payload
+                .get("private")
                 .and_then(|v| v.as_bool())
                 .unwrap_or(true);
             let password = get_option_string(payload, "password");
@@ -671,7 +671,7 @@ async fn get_messages(State(state): State<AppState>, Path(id): Path<u8>) -> impl
             }
             debug!("Fetched {} messages for node {}", messages_json.len(), id);
             if messages_json.is_empty() {
-                warn!("No messages found for node {}", id);
+                debug!("No messages found for node {}", id);
             }
             (StatusCode::OK, Json(json!(messages_json)))
         }
