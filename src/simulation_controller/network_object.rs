@@ -63,6 +63,24 @@ impl Drone {
     pub fn get_group(&self) -> DroneType {
         self.group.clone()
     }
+
+    pub fn crash(&mut self) -> Result<(), String> {
+        for neighbour in std::mem::take(&mut self.neighbours).into_iter() {
+            if let Err(e) = self.cmd_send.send(DroneCommand::RemoveSender(neighbour)) {
+                error!(
+                    "Failed to remove neighbour {} from drone-{} ({}): {}",
+                    neighbour, self.id, self.group, e
+                );
+            }
+        }
+        if let Err(e) = self.cmd_send.send(DroneCommand::Crash) {
+            return Err(format!(
+                "Failed to crash drone-{} ({}): {}",
+                self.id, self.group, e
+            ));
+        }
+        Ok(())
+    }
 }
 
 impl NetworkObject for Drone {

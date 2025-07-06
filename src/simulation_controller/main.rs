@@ -100,40 +100,35 @@ impl SimulationController {
     }
 
     fn destroy_netowrk(&mut self) -> Result<(), String> {
-        for (id, drone) in self.drones.iter_mut() {
+        for (id, mut drone) in std::mem::take(&mut self.drones).into_iter() {
+            info!(target: LOG_TARGET, "Crashing drone with ID: {}", id);
+            drone.crash()?;
+
             if let Err(e) = drone.get_cmd_send().send(DroneCommand::Crash) {
                 error!(target: LOG_TARGET, "Failed to crash drone {}: {}", id, e);
                 return Err(format!("Failed to crash drone {}: {}", id, e));
             }
         }
 
-        for (id, server) in self.servers.iter_mut() {
+        for (id, server) in std::mem::take(&mut self.servers).iter_mut() {
+            info!(target: LOG_TARGET, "Quitting server with ID: {}", id);
             if let Err(e) = server.get_cmd_send().send(NodeCommand::Quit) {
                 error!(target: LOG_TARGET, "Failed to quit server {}: {}", id, e);
                 return Err(format!("Failed to quit server {}: {}", id, e));
             }
         }
 
-        for (id, client) in self.clients.iter_mut() {
+        for (id, client) in std::mem::take(&mut self.clients).iter_mut() {
+            info!(target: LOG_TARGET, "Quitting client with ID: {}", id);
             if let Err(e) = client.get_cmd_send().send(NodeCommand::Quit) {
                 error!(target: LOG_TARGET, "Failed to quit client {}: {}", id, e);
                 return Err(format!("Failed to quit client {}: {}", id, e));
             }
         }
 
-        let combined_handles = self
-            .d_handles
-            .drain(..)
-            .chain(self.s_handles.drain(..))
-            .chain(self.c_handles.drain(..))
-            .collect::<Vec<JoinHandle<()>>>();
-
-        for d_handle in combined_handles.into_iter() {
-            if let Err(e) = d_handle.join() {
-                error!(target: LOG_TARGET, "Failed to join drone thread: {:?}", e);
-                return Err(format!("Failed to join thread: {:?}", e));
-            }
-        }
+        self.d_handles.clear();
+        self.s_handles.clear();
+        self.c_handles.clear();
 
         self.packet_channels.clear();
 
@@ -231,6 +226,8 @@ impl SimulationController {
                 return Err(format!("Failed to add edge {:?}: {}", edge, e));
             }
         }
+
+        self.active_configuration = id;
 
         Ok(())
     }
@@ -411,6 +408,8 @@ impl SimulationController {
                 }
             }
             drone.get_cmd_send().send(DroneCommand::Crash)?;
+
+            // TODO: Join hanlde
             Ok(())
         } else if let Some(server) = self.servers.remove(&id) {
             for neighbour_id in server.get_neighbours() {

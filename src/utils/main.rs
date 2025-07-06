@@ -89,6 +89,11 @@ pub struct Configuration {
     pub is_active: bool,
 }
 
+#[derive(Deserialize, Debug)]
+pub struct ConfigurationChange {
+    pub id: u8,
+}
+
 // Convert drone dependency name to display name
 // e.g., "wg_drone_bobry_w_locie" -> "Bobry W Locie"
 pub fn format_drone_name(dep_name: &str) -> String {

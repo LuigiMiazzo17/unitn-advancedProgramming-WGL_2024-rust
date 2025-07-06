@@ -421,6 +421,25 @@ async fn get_configurations(State(state): State<AppState>) -> impl IntoResponse 
     (StatusCode::OK, Json(json!(configurations)))
 }
 
+async fn change_configuration(
+    State(state): State<AppState>,
+    Json(config): Json<ConfigurationChange>,
+) -> impl IntoResponse {
+    debug!("Changing configuration with payload: {:?}", config);
+    let mut controller = state.simulation_controller.lock().unwrap();
+
+    match controller.spawn_network_from_config(config.id) {
+        Ok(_) => (
+            StatusCode::OK,
+            Json(json!({ "message": "Configuration changed successfully" })),
+        ),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": format!("Failed to change configuration: {}", e) })),
+        ),
+    }
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     env_logger::init();
@@ -452,7 +471,10 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/drone/{id}/pdr", patch(set_pdr))
         .route("/api/edges", post(add_edge).delete(delete_edge))
         .route("/api/messages", post(send_message))
-        .route("/api/configurations", get(get_configurations))
+        .route(
+            "/api/configurations",
+            get(get_configurations).post(change_configuration),
+        )
         .with_state(app_state)
         .fallback_service(ServeDir::new("./dist").append_index_html_on_directories(true));
 

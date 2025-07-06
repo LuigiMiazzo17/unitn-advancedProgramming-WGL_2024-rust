@@ -3,3 +3,9 @@ id = 1
 name = "Base Configuration"
 file_name = "base.toml"
 description = "Base configuration for the drone network simulation"
+
+[[configuration]]
+id = 2
+name = "Connected"
+file_name = "connected.toml"
+description = "Configuration for a fully connected drone network"
