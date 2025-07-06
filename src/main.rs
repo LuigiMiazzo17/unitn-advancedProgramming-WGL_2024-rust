@@ -193,7 +193,7 @@ async fn get_nodes() -> Json<Value> {
 async fn get_node(State(state): State<AppState>, Path(id): Path<u8>) -> impl IntoResponse {
     info!("Fetching node with ID: {}", id);
     // Access the simulation controller
-    let controller = state.simulation_controller.lock().unwrap();
+    let mut controller = state.simulation_controller.lock().unwrap();
 
     match controller.get_node_data(id) {
         Ok(node_data) => {
@@ -209,10 +209,10 @@ async fn get_node(State(state): State<AppState>, Path(id): Path<u8>) -> impl Int
             });
             match node_data.pdr {
                 Some(pdr_value) => {
-                    node_json
-                        .as_object_mut()
-                        .unwrap()
-                        .insert("packet_drop_rate".to_string(), pdr_value.into());
+                    let node = node_json.as_object_mut().unwrap();
+                    node.insert("packet_drop_rate".to_string(), pdr_value.into());
+                    node.insert("pkg_sent".to_string(), node_data.stats.unwrap().0.into());
+                    node.insert("pkg_drop".to_string(), node_data.stats.unwrap().1.into());
                 }
                 None => {
                     debug!("No PDR data available for node {}", id);

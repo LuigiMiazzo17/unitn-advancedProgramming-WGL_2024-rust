@@ -52,12 +52,6 @@ pub struct SimulationController {
     // Events from clients to controller - Sender<ClientControlMessage>
     pub client_event_recv: Receiver<ClientControlMessage>,
 
-    /// Events from drones to controller - Sender<DroneEvent>
-    pub drone_event_send: Sender<DroneEvent>,
-
-    /// Events from the drones - Receiver<DroneEvent>
-    pub drone_event_recv: Receiver<DroneEvent>,
-
     /// Thread handles for spawned drone processes
     pub d_handles: Vec<JoinHandle<()>>,
 
@@ -76,7 +70,6 @@ pub struct SimulationController {
 
 impl SimulationController {
     pub fn new(config_id: u8) -> Result<Self, String> {
-        let (drone_event_send, drone_event_recv) = unbounded();
         let (client_event_send, client_event_recv) = unbounded();
 
         let mut sim = Self {
@@ -85,8 +78,6 @@ impl SimulationController {
             clients: HashMap::new(),
             client_event_send,
             client_event_recv,
-            drone_event_send,
-            drone_event_recv,
             d_handles: Vec::new(),
             s_handles: Vec::new(),
             c_handles: Vec::new(),
@@ -363,7 +354,7 @@ impl SimulationController {
         }
     }
 
-    pub fn get_node_data(&self, id: NodeId) -> Result<NodeData, String> {
+    pub fn get_node_data(&mut self, id: NodeId) -> Result<NodeData, String> {
         let node = self.get_net_obj_from_id(id);
 
         if let Some(node) = node {
@@ -379,12 +370,21 @@ impl SimulationController {
                 })
                 .collect();
             let label = node.get_label();
+            let node_type = node.get_type_string();
+
+            let (pdr, stats) = if let Some(d) = self.drones.get_mut(&id) {
+                d.update_events();
+                (Some(d.get_pdr()), Some(d.get_stats()))
+            } else {
+                (None, None)
+            };
 
             Ok(NodeData {
                 label,
-                node_type: node.get_type_string(),
+                node_type,
                 neighbours,
-                pdr: self.drones.get(&id).map(|d| d.get_pdr()),
+                pdr,
+                stats,
             })
         } else {
             error!(target: LOG_TARGET, "Node with ID {} not found!", id);
@@ -585,18 +585,20 @@ impl SimulationController {
     ) -> anyhow::Result<u8> {
         let id = self.get_id(id);
         let pdr = pdr.unwrap_or(1.0);
-        let node_event_send: Sender<DroneEvent> = self.drone_event_send.clone();
         // Create packet channel for the new server
         let (packet_send, packet_recv) = unbounded();
+        let (event_send, event_recv) = unbounded();
 
         let (mut drone_obj, controller_drone_send, group) =
-            self.choose_a_drone(id, node_event_send, packet_recv, HashMap::new(), pdr, group);
+            self.choose_a_drone(id, event_send, packet_recv, HashMap::new(), pdr, group);
 
         self.packet_channels.insert(id, packet_send);
 
         // Insert server controller before spawning thread
-        self.drones
-            .insert(id, Drone::new(id, controller_drone_send, pdr, group));
+        self.drones.insert(
+            id,
+            Drone::new(id, controller_drone_send, pdr, event_recv, group),
+        );
 
         self.d_handles
             .push(

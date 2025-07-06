@@ -1,7 +1,8 @@
 use log::error;
 use std::collections::HashSet;
+use wg_2024::controller::DroneEvent;
 
-use crossbeam::channel::Sender;
+use crossbeam::channel::{Receiver, Sender};
 use wg_2024::controller::DroneCommand;
 use wg_2024::network::NodeId;
 use wg_2024::packet::Packet;
@@ -14,6 +15,8 @@ use crate::utils::ServerType;
 pub struct Drone {
     id: NodeId,
     cmd_send: Sender<DroneCommand>,
+    statistics: (u32, u32), // (sent, dropped)
+    event_recv: Receiver<DroneEvent>,
     pdr: f32,
     group: DroneType,
     neighbours: HashSet<NodeId>,
@@ -28,11 +31,19 @@ pub trait NetworkObject {
 }
 
 impl Drone {
-    pub fn new(id: NodeId, cmd_send: Sender<DroneCommand>, pdr: f32, group: DroneType) -> Self {
+    pub fn new(
+        id: NodeId,
+        cmd_send: Sender<DroneCommand>,
+        pdr: f32,
+        event_recv: Receiver<DroneEvent>,
+        group: DroneType,
+    ) -> Self {
         Self {
             id,
             cmd_send,
             pdr,
+            event_recv,
+            statistics: (0, 0),
             group,
             neighbours: HashSet::new(),
         }
@@ -44,6 +55,10 @@ impl Drone {
 
     pub fn get_pdr(&self) -> f32 {
         self.pdr
+    }
+
+    pub fn get_stats(&self) -> (u32, u32) {
+        self.statistics
     }
 
     pub fn set_pdr(&mut self, pdr: f32) -> Result<(), String> {
@@ -80,6 +95,30 @@ impl Drone {
             ));
         }
         Ok(())
+    }
+
+    pub fn update_events(&mut self) {
+        let mut controller_shortcuts = Vec::new();
+
+        while let Ok(event) = self.event_recv.try_recv() {
+            match event {
+                DroneEvent::PacketSent(_) => {
+                    self.statistics.0 += 1;
+                }
+                DroneEvent::PacketDropped(_) => {
+                    self.statistics.1 += 1;
+                }
+                DroneEvent::ControllerShortcut(p) => {
+                    controller_shortcuts.push(p);
+                }
+            }
+        }
+        if controller_shortcuts.len() > 0 {
+            error!(
+                "Drone {} ({}) received controller shortcuts",
+                self.id, self.group
+            );
+        }
     }
 }
 
