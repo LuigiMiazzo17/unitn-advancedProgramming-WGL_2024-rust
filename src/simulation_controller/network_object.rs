@@ -243,6 +243,7 @@ pub struct Client {
     client_type: ClientType,
     neighbours: HashSet<NodeId>,
     messages: Vec<ResponseFromNetwork>,
+    messages_version: u64,
 }
 
 impl Client {
@@ -253,6 +254,7 @@ impl Client {
             client_type,
             neighbours: HashSet::new(),
             messages: Vec::new(),
+            messages_version: 0,
         }
     }
 
@@ -272,11 +274,12 @@ impl Client {
     }
 
     pub fn add_message(&mut self, message: ResponseFromNetwork) {
+        self.messages_version += 1;
         self.messages.push(message);
     }
 
-    pub fn get_messages(&self) -> Vec<ResponseFromNetwork> {
-        self.messages.clone()
+    pub fn get_messages(&self) -> (u64, Vec<ResponseFromNetwork>) {
+        (self.messages_version, self.messages.clone())
     }
 }
 
