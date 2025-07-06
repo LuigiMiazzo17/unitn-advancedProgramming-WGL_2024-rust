@@ -1,0 +1,322 @@
+use log::error;
+use std::collections::HashSet;
+use wg_2024::controller::DroneEvent;
+
+use crossbeam::channel::{Receiver, Sender};
+use wg_2024::controller::DroneCommand;
+use wg_2024::network::NodeId;
+use wg_2024::packet::Packet;
+
+use crate::network::NodeCommand;
+use crate::network::ResponseFromNetwork;
+use crate::utils::ClientType;
+use crate::utils::DroneType;
+use crate::utils::ServerType;
+
+pub struct Drone {
+    id: NodeId,
+    cmd_send: Sender<DroneCommand>,
+    statistics: (u32, u32), // (sent, dropped)
+    event_recv: Receiver<DroneEvent>,
+    pdr: f32,
+    group: DroneType,
+    neighbours: HashSet<NodeId>,
+}
+
+pub trait NetworkObject {
+    fn get_neighbours(&self) -> &HashSet<NodeId>;
+    fn add_neighbour(&mut self, connected_id: NodeId, pkg_sender: Sender<Packet>);
+    fn remove_neighbour(&mut self, connected_id: NodeId) -> Result<(), String>;
+    fn get_label(&self) -> String;
+    fn get_type_string(&self) -> String;
+}
+
+impl Drone {
+    pub fn new(
+        id: NodeId,
+        cmd_send: Sender<DroneCommand>,
+        pdr: f32,
+        event_recv: Receiver<DroneEvent>,
+        group: DroneType,
+    ) -> Self {
+        Self {
+            id,
+            cmd_send,
+            pdr,
+            event_recv,
+            statistics: (0, 0),
+            group,
+            neighbours: HashSet::new(),
+        }
+    }
+
+    pub fn get_cmd_send(&self) -> &Sender<DroneCommand> {
+        &self.cmd_send
+    }
+
+    pub fn get_pdr(&self) -> f32 {
+        self.pdr
+    }
+
+    pub fn get_stats(&self) -> (u32, u32) {
+        self.statistics
+    }
+
+    pub fn set_pdr(&mut self, pdr: f32) -> Result<(), String> {
+        if !(0.0..=1.0).contains(&pdr) {
+            return Err(format!("Invalid PDR value: {}", pdr));
+        }
+        if let Err(e) = self.cmd_send.send(DroneCommand::SetPacketDropRate(pdr)) {
+            return Err(format!(
+                "Failed to set PDR for drone-{} ({}): {}",
+                self.id, self.group, e
+            ));
+        };
+        self.pdr = pdr;
+        Ok(())
+    }
+
+    pub fn get_group(&self) -> DroneType {
+        self.group.clone()
+    }
+
+    pub fn crash(&mut self) -> Result<(), String> {
+        for neighbour in std::mem::take(&mut self.neighbours).into_iter() {
+            if let Err(e) = self.cmd_send.send(DroneCommand::RemoveSender(neighbour)) {
+                error!(
+                    "Failed to remove neighbour {} from drone-{} ({}): {}",
+                    neighbour, self.id, self.group, e
+                );
+            }
+        }
+        if let Err(e) = self.cmd_send.send(DroneCommand::Crash) {
+            return Err(format!(
+                "Failed to crash drone-{} ({}): {}",
+                self.id, self.group, e
+            ));
+        }
+        Ok(())
+    }
+
+    pub fn update_events(&mut self) {
+        let mut controller_shortcuts = Vec::new();
+
+        while let Ok(event) = self.event_recv.try_recv() {
+            match event {
+                DroneEvent::PacketSent(_) => {
+                    self.statistics.0 += 1;
+                }
+                DroneEvent::PacketDropped(_) => {
+                    self.statistics.1 += 1;
+                }
+                DroneEvent::ControllerShortcut(p) => {
+                    controller_shortcuts.push(p);
+                }
+            }
+        }
+        if !controller_shortcuts.is_empty() {
+            error!(
+                "Drone {} ({}) received controller shortcuts",
+                self.id, self.group
+            );
+        }
+    }
+}
+
+impl NetworkObject for Drone {
+    fn get_neighbours(&self) -> &HashSet<NodeId> {
+        &self.neighbours
+    }
+
+    fn add_neighbour(&mut self, neighbour: NodeId, pkg_sender: Sender<Packet>) {
+        if !self.neighbours.insert(neighbour) {
+            error!(
+                "Neighbour {} already exists in drone {}",
+                neighbour, self.group
+            );
+        }
+        self.cmd_send
+            .send(DroneCommand::AddSender(neighbour, pkg_sender))
+            .unwrap();
+    }
+
+    fn remove_neighbour(&mut self, connected_id: NodeId) -> Result<(), String> {
+        if self.neighbours.remove(&connected_id) {
+            self.cmd_send
+                .send(DroneCommand::RemoveSender(connected_id))
+                .unwrap();
+            Ok(())
+        } else {
+            Err(format!(
+                "Neighbour {} not found in drone {}",
+                connected_id, self.group
+            ))
+        }
+    }
+
+    fn get_label(&self) -> String {
+        format!("Drone {} ({})", self.id, self.group)
+    }
+
+    fn get_type_string(&self) -> String {
+        "drone".to_string()
+    }
+}
+
+pub struct Server {
+    id: NodeId,
+    cmd_send: Sender<NodeCommand>,
+    server_type: ServerType,
+    neighbours: HashSet<NodeId>,
+}
+
+impl Server {
+    pub fn new(id: NodeId, cmd_send: Sender<NodeCommand>, server_type: ServerType) -> Self {
+        Self {
+            id,
+            cmd_send,
+            server_type,
+            neighbours: HashSet::new(),
+        }
+    }
+
+    pub fn get_cmd_send(&self) -> &Sender<NodeCommand> {
+        &self.cmd_send
+    }
+
+    pub fn get_server_type(&self) -> ServerType {
+        self.server_type.clone()
+    }
+
+    pub fn get_subtype_string(&self) -> String {
+        match self.server_type {
+            ServerType::Communication => "communication".to_string(),
+            ServerType::Content => "content".to_string(),
+        }
+    }
+}
+
+impl NetworkObject for Server {
+    fn get_neighbours(&self) -> &HashSet<NodeId> {
+        &self.neighbours
+    }
+
+    fn add_neighbour(&mut self, neighbour: NodeId, pkg_channel: Sender<Packet>) {
+        if !self.neighbours.insert(neighbour) {
+            error!("Neighbour {} already exists for this server", neighbour);
+        }
+        self.cmd_send
+            .send(NodeCommand::AddNeighbour((neighbour, pkg_channel)))
+            .unwrap();
+    }
+
+    fn remove_neighbour(&mut self, connected_id: NodeId) -> Result<(), String> {
+        if self.neighbours.remove(&connected_id) {
+            self.cmd_send
+                .send(NodeCommand::RemoveNeighbour(connected_id))
+                .unwrap();
+            Ok(())
+        } else {
+            Err(format!("Neighbour {} not found in server", connected_id))
+        }
+    }
+
+    fn get_label(&self) -> String {
+        format!(
+            "Server {} ({})",
+            self.id,
+            match self.server_type {
+                ServerType::Communication => "Communication Server",
+                ServerType::Content => "Content Server",
+            }
+        )
+    }
+
+    fn get_type_string(&self) -> String {
+        "server".to_string()
+    }
+}
+
+pub struct Client {
+    id: NodeId,
+    cmd_send: Sender<NodeCommand>,
+    client_type: ClientType,
+    neighbours: HashSet<NodeId>,
+    messages: Vec<ResponseFromNetwork>,
+}
+
+impl Client {
+    pub fn new(id: NodeId, cmd_send: Sender<NodeCommand>, client_type: ClientType) -> Self {
+        Self {
+            id,
+            cmd_send,
+            client_type,
+            neighbours: HashSet::new(),
+            messages: Vec::new(),
+        }
+    }
+
+    pub fn get_cmd_send(&self) -> &Sender<NodeCommand> {
+        &self.cmd_send
+    }
+
+    pub fn get_client_type(&self) -> ClientType {
+        self.client_type.clone()
+    }
+
+    pub fn get_subtype_string(&self) -> String {
+        match self.client_type {
+            ClientType::Web => "web".to_string(),
+            ClientType::Chat => "chat".to_string(),
+        }
+    }
+
+    pub fn add_message(&mut self, message: ResponseFromNetwork) {
+        self.messages.push(message);
+    }
+
+    pub fn get_messages(&self) -> Vec<ResponseFromNetwork> {
+        self.messages.clone()
+    }
+}
+
+impl NetworkObject for Client {
+    fn get_neighbours(&self) -> &HashSet<NodeId> {
+        &self.neighbours
+    }
+
+    fn add_neighbour(&mut self, neighbour: NodeId, pkg_channel: Sender<Packet>) {
+        if !self.neighbours.insert(neighbour) {
+            error!("Neighbour {} already exists for this server", neighbour);
+        }
+        self.cmd_send
+            .send(NodeCommand::AddNeighbour((neighbour, pkg_channel)))
+            .unwrap();
+    }
+
+    fn remove_neighbour(&mut self, connected_id: NodeId) -> Result<(), String> {
+        if self.neighbours.remove(&connected_id) {
+            self.cmd_send
+                .send(NodeCommand::RemoveNeighbour(connected_id))
+                .unwrap();
+            Ok(())
+        } else {
+            Err(format!("Neighbour {} not found in server", connected_id))
+        }
+    }
+
+    fn get_label(&self) -> String {
+        format!(
+            "Client {} ({})",
+            self.id,
+            match self.client_type {
+                ClientType::Web => "Web Client",
+                ClientType::Chat => "Chat Client",
+            }
+        )
+    }
+
+    fn get_type_string(&self) -> String {
+        "client".to_string()
+    }
+}

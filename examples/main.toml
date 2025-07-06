@@ -1,0 +1,23 @@
+[[configuration]]
+id = 1
+name = "Base Configuration"
+file_name = "base.toml"
+description = "Base configuration for the drone network simulation"
+
+[[configuration]]
+id = 2
+name = "Connected"
+file_name = "connected.toml"
+description = "Configuration for a fully connected drone network"
+
+[[configuration]]
+id = 3
+name = "Wireless Phone"
+file_name = "wireless.toml"
+description = "Configuration for a drone network with a long chain of drones"
+
+[[configuration]]
+id = 4
+name = "Core Network"
+file_name = "core.toml"
+description = "Configuration for a core network of drones and multiple client and servers"
