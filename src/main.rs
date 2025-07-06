@@ -1,21 +1,21 @@
 use axum::http::StatusCode;
-use log::{debug, error, info, trace};
-use std::collections::HashSet;
-use std::fs;
-use unitn_advancedProgramming_WGL_2024_rust::simulation_controller::{
-    SimulationController, network_object::NetworkObject,
-};
-
 use axum::{
     extract::{Path, State, rejection::JsonRejection},
     response::{IntoResponse, Json},
     routing::{Router, get, patch, post},
 };
+use log::{debug, error, info, trace};
 use serde_json::{Value, json};
+use std::collections::HashSet;
+use std::fs;
 use std::sync::{Arc, Mutex};
 use tokio::net::TcpListener;
 use tower_http::services::ServeDir;
+use unitn_advancedProgramming_WGL_2024_rust::simulation_controller::{
+    SimulationController, network_object::NetworkObject,
+};
 use unitn_advancedProgramming_WGL_2024_rust::utils::*;
+use unitn_advancedProgramming_WGL_2024_rust::utils::{ClientType, ServerType};
 
 // Shared state structure - wraps the simulation controller for thread-safe access
 #[derive(Clone)]
@@ -52,7 +52,11 @@ async fn get_topology(State(state): State<AppState>) -> Json<Value> {
             "data": {
                 "id": format!("{}", id),
                 "label": format!("Server {}", id),
-                "type": "server"
+                "type": "server",
+                "subtype": match server.get_server_type() {
+                    ServerType::Content => "content",
+                    ServerType::Communication => "communication",
+                }
             }
         }));
 
@@ -67,7 +71,12 @@ async fn get_topology(State(state): State<AppState>) -> Json<Value> {
             "data": {
                 "id": format!("{}", id),
                 "label": format!("Client {}", id),
-                "type": "client"
+                "type": "client",
+                "subtype": match client.get_client_type() {
+                    ClientType::Web => "web",
+                    ClientType::Chat => "chat",
+                }
+
             }
         }));
 
@@ -176,13 +185,13 @@ async fn get_nodes() -> Json<Value> {
 
     // Add predefined servers
     nodes.push(json!({
-        "name": "Media Server",
+        "name": "Content Server",
         "type": "server",
         "image": media_server_image
     }));
 
     nodes.push(json!({
-        "name": "Text Server",
+        "name": "Communication Server",
         "type": "server",
         "image": text_server_image
     }));

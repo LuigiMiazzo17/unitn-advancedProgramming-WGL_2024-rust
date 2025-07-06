@@ -182,6 +182,10 @@ impl Server {
     pub fn get_cmd_send(&self) -> &Sender<NodeCommand> {
         &self.cmd_send
     }
+
+    pub fn get_server_type(&self) -> ServerType {
+        self.server_type.clone()
+    }
 }
 
 impl NetworkObject for Server {
@@ -244,6 +248,10 @@ impl Client {
 
     pub fn get_cmd_send(&self) -> &Sender<NodeCommand> {
         &self.cmd_send
+    }
+
+    pub fn get_client_type(&self) -> ClientType {
+        self.client_type.clone()
     }
 }
 
