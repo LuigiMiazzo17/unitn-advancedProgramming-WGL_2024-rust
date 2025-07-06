@@ -12,7 +12,7 @@ use std::sync::{Arc, Mutex};
 use tokio::net::TcpListener;
 use tower_http::services::ServeDir;
 use unitn_advancedProgramming_WGL_2024_rust::network::message::{
-    ChatRequest, CreateChatRequest, Request,
+    ChatId, ChatRequest, ContentRequest, CreateChatRequest, Request,
 };
 use unitn_advancedProgramming_WGL_2024_rust::simulation_controller::{
     SimulationController, network_object::NetworkObject,
@@ -304,55 +304,53 @@ async fn set_pdr(
 }
 
 fn gimme_request(msg_type: &str, payload: &Value) -> Result<Request, String> {
+    fn get_chat_id(payload: &Value) -> Result<ChatId, String> {
+        payload
+            .get("id")
+            .and_then(|v| v.as_u64())
+            .map(|id| id as ChatId)
+            .ok_or_else(|| "Missing or invalid chat_id".to_string())
+    }
+    fn get_string(payload: &Value, key: &str) -> Result<String, String> {
+        payload
+            .get(key)
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .ok_or_else(|| format!("Missing or invalid {}", key))
+    }
+    fn get_option_string(payload: &Value, key: &str) -> Option<String> {
+        payload
+            .get(key)
+            .and_then(|v| v.as_str())
+            .map(|s| Some(s.to_string()))
+            .unwrap_or(None)
+    }
+
     match msg_type {
+        "server-type" => Ok(Request::ServerType),
         "join" => {
-            let chat_id: u64 = payload
-                .get("id")
-                .and_then(|v| v.as_u64())
-                .ok_or_else(|| "Missing or invalid chat_id".to_string())?;
-            let password: Option<String> = payload
-                .get("password")
-                .and_then(|v| v.as_str())
-                .map(|s| Some(s.to_string()))
-                .unwrap_or(None);
+            let chat_id = get_chat_id(payload)?;
+            let password = get_option_string(payload, "password");
             Ok(Request::ChatRequest(ChatRequest::Join(chat_id, password)))
         }
         "leave" => {
-            let chat_id: u64 = payload
-                .get("id")
-                .and_then(|v| v.as_u64())
-                .ok_or_else(|| "Missing or invalid chat_id".to_string())?;
+            let chat_id = get_chat_id(payload)?;
             Ok(Request::ChatRequest(ChatRequest::Leave(chat_id)))
         }
         "send-message" => {
-            let chat_id: u64 = payload
-                .get("id")
-                .and_then(|v| v.as_u64())
-                .ok_or_else(|| "Missing or invalid chat_id".to_string())?;
-            let message: String = payload
-                .get("message")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string())
-                .ok_or_else(|| "Missing or invalid message".to_string())?;
+            let chat_id = get_chat_id(payload)?;
+            let message = get_string(payload, "message")?;
             Ok(Request::ChatRequest(ChatRequest::SendMessage(
                 chat_id, message,
             )))
         }
         "create" => {
-            let name: String = payload
-                .get("name")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string())
-                .ok_or_else(|| "Missing or invalid chat_name".to_string())?;
+            let name = get_string(payload, "name")?;
             let public: bool = payload
                 .get("public")
                 .and_then(|v| v.as_bool())
                 .unwrap_or(true);
-            let password: Option<String> = payload
-                .get("password")
-                .and_then(|v| v.as_str())
-                .map(|s| Some(s.to_string()))
-                .unwrap_or(None);
+            let password = get_option_string(payload, "password");
             Ok(Request::ChatRequest(ChatRequest::Create(
                 CreateChatRequest {
                     name,
@@ -362,19 +360,41 @@ fn gimme_request(msg_type: &str, payload: &Value) -> Result<Request, String> {
             )))
         }
         "delete" => {
-            let chat_id: u64 = payload
-                .get("id")
-                .and_then(|v| v.as_u64())
-                .ok_or_else(|| "Missing or invalid id".to_string())?;
+            let chat_id = get_chat_id(payload)?;
             Ok(Request::ChatRequest(ChatRequest::Delete(chat_id)))
         }
         "get-chats" => Ok(Request::ChatRequest(ChatRequest::GetChats)),
         "get-messages" => {
-            let chat_id: u64 = payload
-                .get("id")
-                .and_then(|v| v.as_u64())
-                .ok_or_else(|| "Missing or invalid chat_id".to_string())?;
+            let chat_id = get_chat_id(payload)?;
             Ok(Request::ChatRequest(ChatRequest::GetMessages(chat_id)))
+        }
+        "list-public-files" => Ok(Request::ContentRequest(ContentRequest::ListPublicFiles)),
+        "get-public-file" => {
+            let file_name = get_string(payload, "file_name")?;
+            Ok(Request::ContentRequest(ContentRequest::GetPublicFile(
+                file_name,
+            )))
+        }
+        "write-public-file" => {
+            let file_name = get_string(payload, "file_name")?;
+            let content = get_string(payload, "content")?;
+            Ok(Request::ContentRequest(ContentRequest::WritePublicFile(
+                file_name, content,
+            )))
+        }
+        "list-private-files" => Ok(Request::ContentRequest(ContentRequest::ListPrivateFiles)),
+        "get-private-file" => {
+            let file_name = get_string(payload, "file_name")?;
+            Ok(Request::ContentRequest(ContentRequest::GetPrivateFile(
+                file_name,
+            )))
+        }
+        "write-private-file" => {
+            let file_name = get_string(payload, "file_name")?;
+            let content = get_string(payload, "content")?;
+            Ok(Request::ContentRequest(ContentRequest::WritePrivateFile(
+                file_name, content,
+            )))
         }
         _ => Err(format!("Unsupported message type: {}", msg_type)),
     }
@@ -554,7 +574,7 @@ async fn add_node(
 
     match node_type {
         NodeType::Drone(drone_type) => {
-            match controller.add_drone(None, drone_type.clone(), Some(1.0)) {
+            match controller.add_drone(None, drone_type.clone(), Some(0.0)) {
                 Ok(id) => (
                     StatusCode::CREATED,
                     Json(json!({

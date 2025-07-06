@@ -59,7 +59,7 @@ impl Display for ServerType {
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ChatResponseMessage {
-    pub id: u64,
+    pub id: ChatId,
     pub name: String,
 }
 
@@ -77,15 +77,17 @@ pub struct CreateChatRequest {
     pub password: Option<String>,
 }
 
+pub type ChatId = u32;
+
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum ChatRequest {
-    Join(u64, Option<String>), // chat id, optional password
-    Leave(u64),                // chat id
-    SendMessage(u64, String),  // chat id, message
-    Create(CreateChatRequest), // chat details
-    Delete(u64),               // chat id
-    GetChats,                  // list all chats
-    GetMessages(u64),          // chat id
+    Join(ChatId, Option<String>), // chat id, optional password
+    Leave(ChatId),                // chat id
+    SendMessage(ChatId, String),  // chat id, message
+    Create(CreateChatRequest),    // chat details
+    Delete(ChatId),               // chat id
+    GetChats,                     // list all chats
+    GetMessages(ChatId),          // chat id
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]

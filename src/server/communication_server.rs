@@ -8,13 +8,13 @@ use std::path::PathBuf;
 use wg_2024::network::NodeId;
 
 use crate::network::message::{
-    ChatMessage, ChatRequest, ChatResponse, ChatResponseMessage, CreateChatRequest, Message,
-    Request, Response, ServerType,
+    ChatId, ChatMessage, ChatRequest, ChatResponse, ChatResponseMessage, CreateChatRequest,
+    Message, Request, Response, ServerType,
 };
 use crate::network::{NodeTrait, SimControllerMessage};
 
 pub struct CommunicationServer {
-    chats: HashMap<u64, Chat>,
+    chats: HashMap<ChatId, Chat>,
     base_path: PathBuf,
 }
 
@@ -140,7 +140,12 @@ impl CommunicationServer {
         Response::ChatResponse(ChatResponse::Chats(chats))
     }
 
-    fn add_message_to_chat(&mut self, chat_id: u64, author: NodeId, message: String) -> Response {
+    fn add_message_to_chat(
+        &mut self,
+        chat_id: ChatId,
+        author: NodeId,
+        message: String,
+    ) -> Response {
         trace!("Adding message to chat {} by peer {}", chat_id, author);
         let chat = self.chats.get_mut(&chat_id);
         match chat {
@@ -181,7 +186,7 @@ impl CommunicationServer {
         Response::Success
     }
 
-    fn delete_chat(&mut self, chat_id: u64) -> Response {
+    fn delete_chat(&mut self, chat_id: ChatId) -> Response {
         if self.chats.remove(&chat_id).is_none() {
             warn!("Chat {} does not exist", chat_id);
             return Response::Error("Chat does not exist".to_string());
@@ -195,7 +200,7 @@ impl CommunicationServer {
         }
     }
 
-    fn get_chat_messages(&self, chat_id: u64) -> Response {
+    fn get_chat_messages(&self, chat_id: ChatId) -> Response {
         match self.chats.get(&chat_id) {
             Some(chat) => {
                 trace!("Retrieving messages for chat {}", chat_id);
@@ -217,7 +222,12 @@ impl CommunicationServer {
         }
     }
 
-    fn join_chat(&mut self, peer_id: NodeId, chat_id: u64, password: Option<String>) -> Response {
+    fn join_chat(
+        &mut self,
+        peer_id: NodeId,
+        chat_id: ChatId,
+        password: Option<String>,
+    ) -> Response {
         info!("Peer {} requested to join chat {}", peer_id, chat_id);
         if let Some(chat) = self.chats.get_mut(&chat_id) {
             if chat.password.as_ref() == password.as_ref() {
@@ -242,7 +252,7 @@ impl CommunicationServer {
         }
     }
 
-    fn leave_chat(&mut self, peer_id: NodeId, chat_id: u64) -> Response {
+    fn leave_chat(&mut self, peer_id: NodeId, chat_id: ChatId) -> Response {
         info!("Peer {} requested to leave chat {}", peer_id, chat_id);
         if let Some(chat) = self.chats.get_mut(&chat_id) {
             if let Some(pos) = chat.registered_peers.iter().position(|&id| id == peer_id) {
