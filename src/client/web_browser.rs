@@ -2,6 +2,7 @@ use crossbeam::channel::Sender;
 use wg_2024::network::NodeId;
 use wg_2024::packet::NodeType;
 
+use chrono::Utc;
 use log::{debug, error, warn};
 
 use crate::network::message::{Message, Response};
@@ -22,6 +23,7 @@ impl NodeTrait for WebBrowser {
                         peer_id: self.node_id,
                         server_id: peer_id,
                         message: response,
+                        timestamp: Utc::now().to_string(),
                     }),
                 ) {
                     error!("Failed to send response from server to client controller: {e}");

@@ -8,6 +8,7 @@ use wg_2024::network::NodeId;
 use wg_2024::packet::Packet;
 
 use crate::network::NodeCommand;
+use crate::network::ResponseFromNetwork;
 use crate::utils::ClientType;
 use crate::utils::DroneType;
 use crate::utils::ServerType;
@@ -113,7 +114,7 @@ impl Drone {
                 }
             }
         }
-        if controller_shortcuts.len() > 0 {
+        if !controller_shortcuts.is_empty() {
             error!(
                 "Drone {} ({}) received controller shortcuts",
                 self.id, self.group
@@ -241,6 +242,7 @@ pub struct Client {
     cmd_send: Sender<NodeCommand>,
     client_type: ClientType,
     neighbours: HashSet<NodeId>,
+    messages: Vec<ResponseFromNetwork>,
 }
 
 impl Client {
@@ -250,6 +252,7 @@ impl Client {
             cmd_send,
             client_type,
             neighbours: HashSet::new(),
+            messages: Vec::new(),
         }
     }
 
@@ -266,6 +269,14 @@ impl Client {
             ClientType::Web => "web".to_string(),
             ClientType::Chat => "chat".to_string(),
         }
+    }
+
+    pub fn add_message(&mut self, message: ResponseFromNetwork) {
+        self.messages.push(message);
+    }
+
+    pub fn get_messages(&self) -> Vec<ResponseFromNetwork> {
+        self.messages.clone()
     }
 }
 

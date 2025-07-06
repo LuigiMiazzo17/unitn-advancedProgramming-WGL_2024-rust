@@ -1,12 +1,14 @@
 use crate::network::message::{Message, Request};
-use crate::network::{ClientControlMessage, Node, NodeCommand, SimControllerMessage};
+use crate::network::{
+    ClientControlMessage, Node, NodeCommand, ResponseFromNetwork, SimControllerMessage,
+};
 use crate::network_initializer::Config;
 use crate::network_initializer::{CONFIGURATIONS_DIR, MAIN_CONFIG_FILE};
 use crate::simulation_controller::network_object::{Client, Drone, NetworkObject, Server};
 use crate::utils::*;
 
 use crossbeam::channel::{Receiver, Sender, unbounded};
-use log::{debug, error, info};
+use log::{debug, error, info, warn};
 use std::collections::{HashMap, HashSet};
 use std::thread::JoinHandle;
 use std::{fs, thread};
@@ -764,5 +766,39 @@ impl SimulationController {
 
         info!(target: LOG_TARGET, "Loaded {} configurations", deserializable_configurations.len());
         deserializable_configurations
+    }
+
+    pub fn get_messages(&mut self, id: u8) -> Result<Vec<ResponseFromNetwork>, String> {
+        let mut messages = Vec::new();
+
+        while let Ok(message) = self.client_event_recv.try_recv() {
+            match message {
+                ClientControlMessage::ReturnResponseFromNetwork(response) => {
+                    messages.push(response);
+                }
+            }
+        }
+
+        for msg in messages.into_iter() {
+            let client = match self.clients.get_mut(&id) {
+                Some(client) => client,
+                None => {
+                    warn!(target: LOG_TARGET, "Client with ID {} not found!", id);
+                    continue;
+                }
+            };
+
+            client.add_message(msg);
+        }
+
+        let client = match self.clients.get(&id) {
+            Some(client) => client,
+            None => {
+                error!(target: LOG_TARGET, "Client with ID {} not found!", id);
+                return Err(format!("Client with ID {} not found!", id));
+            }
+        };
+
+        Ok(client.get_messages())
     }
 }

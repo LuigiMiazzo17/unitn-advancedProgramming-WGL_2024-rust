@@ -331,7 +331,7 @@ fn gimme_request(msg_type: &str, payload: &Value) -> Result<Request, String> {
             let chat_id: u64 = payload
                 .get("id")
                 .and_then(|v| v.as_u64())
-                .ok_or_else(|| "Missing or invalid chat_id".to_string())?;
+                .ok_or_else(|| "Missing or invalid id".to_string())?;
             Ok(Request::ChatRequest(ChatRequest::Delete(chat_id)))
         }
         "get-chats" => Ok(Request::ChatRequest(ChatRequest::GetChats)),
@@ -590,10 +590,44 @@ async fn change_configuration(
             StatusCode::OK,
             Json(json!({ "message": "Configuration changed successfully" })),
         ),
-        Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({ "error": format!("Failed to change configuration: {}", e) })),
-        ),
+        Err(e) => {
+            error!("Failed to change configuration: {}", e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "error": format!("Failed to change configuration: {}", e) })),
+            )
+        }
+    }
+}
+
+async fn get_messages(State(state): State<AppState>, Path(id): Path<u8>) -> impl IntoResponse {
+    info!("Fetching messages from simulation controller");
+    let mut controller = state.simulation_controller.lock().unwrap();
+
+    match controller.get_messages(id) {
+        Ok(messages) => {
+            let mut messages_json = Vec::new();
+            for msg in messages {
+                let message_json = json!({
+                    "from": msg.server_id,
+                    "message": msg.message.to_string(),
+                    "timestamp": msg.timestamp,
+                });
+                messages_json.push(message_json);
+            }
+            debug!("Fetched {} messages for node {}", messages_json.len(), id);
+            if messages_json.is_empty() {
+                warn!("No messages found for node {}", id);
+            }
+            (StatusCode::OK, Json(json!(messages_json)))
+        }
+        Err(e) => {
+            error!("Failed to fetch messages: {}", e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "error": format!("Failed to fetch messages: {}", e) })),
+            )
+        }
     }
 }
 
@@ -625,6 +659,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/topology", get(get_topology))
         .route("/api/nodes", get(get_nodes).post(add_node))
         .route("/api/node/{id}", get(get_node).delete(delete_node))
+        .route("/api/node/{id}/messages", get(get_messages))
         .route("/api/drone/{id}/pdr", patch(set_pdr))
         .route("/api/edges", post(add_edge).delete(delete_edge))
         .route("/api/messages/{req}", post(send_message))

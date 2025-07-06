@@ -22,6 +22,7 @@ impl NodeTrait for ChatClient {
                         peer_id: self.node_id,
                         server_id: peer_id,
                         message: response,
+                        timestamp: chrono::Utc::now().to_string(),
                     }),
                 ) {
                     error!("Failed to send response from server to client controller: {e}");

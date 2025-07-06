@@ -1,5 +1,6 @@
-use crossbeam::channel::{select_biased, unbounded, Receiver, Sender};
+use crossbeam::channel::{Receiver, Sender, select_biased, unbounded};
 use log::{debug, error, trace};
+use serde::Serialize;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -40,10 +41,12 @@ pub enum ClientControlMessage {
     ReturnResponseFromNetwork(ResponseFromNetwork),
 }
 
+#[derive(Clone, Serialize)]
 pub struct ResponseFromNetwork {
     pub peer_id: NodeId,
     pub server_id: NodeId,
     pub message: Response,
+    pub timestamp: String,
 }
 
 pub enum NodeCommand {
