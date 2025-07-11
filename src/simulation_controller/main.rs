@@ -92,7 +92,7 @@ impl SimulationController {
         Ok(sim)
     }
 
-    fn destroy_netowrk(&mut self) -> Result<(), String> {
+    fn destroy_network(&mut self) -> Result<(), String> {
         for (id, mut drone) in std::mem::take(&mut self.drones).into_iter() {
             info!(target: LOG_TARGET, "Crashing drone with ID: {}", id);
             drone.crash()?;
@@ -129,7 +129,7 @@ impl SimulationController {
     }
 
     pub fn spawn_network_from_config(&mut self, id: u8) -> Result<(), String> {
-        if let Err(e) = self.destroy_netowrk() {
+        if let Err(e) = self.destroy_network() {
             error!(target: LOG_TARGET, "Failed to destroy existing network: {}", e);
             return Err(format!("Failed to destroy existing network: {}", e));
         }
