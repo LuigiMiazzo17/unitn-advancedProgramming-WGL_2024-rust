@@ -18,7 +18,7 @@ pub struct CommunicationServer {
     base_path: PathBuf,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 struct Chat {
     name: String,
     public: bool,
@@ -138,8 +138,6 @@ impl CommunicationServer {
             })
             .collect();
 
-        dbg!("{:?}", &chats);
-
         // add also private chats for registered peers
         for (id, chat) in &self.chats {
             if chat.registered_peers.contains(&peer_id) && !chat.public {
@@ -149,7 +147,6 @@ impl CommunicationServer {
                 });
             }
         }
-
         Response::ChatResponse(ChatResponse::Chats(chats))
     }
 

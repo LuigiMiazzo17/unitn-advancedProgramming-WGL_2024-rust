@@ -45,11 +45,16 @@ impl Log for InMemoryLogger {
 
     fn log(&self, record: &Record) {
         if self.enabled(record.metadata()) {
-            let mut logs = self.logs.lock().unwrap();
-            logs.push(LogEntry {
-                level: record.level(),
-                message: format!("{}", record.args()),
-            });
+            // don't want to log messages from axum modules
+            let target = record.metadata().target();
+            let filter = target.starts_with("axum");
+            if !filter {
+                let mut logs = self.logs.lock().unwrap();
+                logs.push(LogEntry {
+                    level: record.level(),
+                    message: format!("{}", record.args()),
+                });
+            }
         }
     }
 

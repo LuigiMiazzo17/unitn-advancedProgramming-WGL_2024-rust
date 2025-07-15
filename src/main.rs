@@ -157,18 +157,6 @@ async fn get_topology(State(state): State<AppState>) -> Json<Value> {
 async fn get_nodes() -> Json<Value> {
     let mut nodes = Vec::new();
 
-    // Get base64 images for different node types
-    let drone_image = image_to_base64("assets/images/drone/drone.png")
-        .unwrap_or_else(|| "data:image/png;base64,".to_string());
-    let chat_client_image = image_to_base64("assets/images/client/chat-client.png")
-        .unwrap_or_else(|| "data:image/png;base64,".to_string());
-    let web_client_image = image_to_base64("assets/images/client/web-client.png")
-        .unwrap_or_else(|| "data:image/png;base64,".to_string());
-    let media_server_image = image_to_base64("assets/images/server/media-server.png")
-        .unwrap_or_else(|| "data:image/png;base64,".to_string());
-    let text_server_image = image_to_base64("assets/images/server/text-server.png")
-        .unwrap_or_else(|| "data:image/png;base64,".to_string());
-
     // Read and parse Cargo.toml to extract drone dependencies
     match fs::read_to_string("Cargo.toml") {
         Ok(cargo_content) => {
@@ -181,7 +169,6 @@ async fn get_nodes() -> Json<Value> {
                         nodes.push(json!({
                             "name": "Rust",
                             "type": "drone",
-                            "image": drone_image
                         }));
                         for (dep_name, _) in dependencies {
                             if dep_name.starts_with("wg_drone_") {
@@ -191,7 +178,6 @@ async fn get_nodes() -> Json<Value> {
                                 nodes.push(json!({
                                     "name": display_name,
                                     "type": "drone",
-                                    "image": drone_image
                                 }));
                             }
                         }
@@ -211,26 +197,22 @@ async fn get_nodes() -> Json<Value> {
     nodes.push(json!({
         "name": "Chat Client",
         "type": "client",
-        "image": chat_client_image
     }));
 
     nodes.push(json!({
         "name": "Web Client",
         "type": "client",
-        "image": web_client_image
     }));
 
     // Add predefined servers
     nodes.push(json!({
         "name": "Content Server",
         "type": "server",
-        "image": media_server_image
     }));
 
     nodes.push(json!({
         "name": "Communication Server",
         "type": "server",
-        "image": text_server_image
     }));
 
     Json(json!({ "nodes": nodes }))
@@ -346,10 +328,10 @@ fn gimme_request(msg_type: &str, payload: &Value) -> Result<Request, String> {
         }
         "create" => {
             let name = get_string(payload, "name")?;
-            let public: bool = !payload
+            let public: bool = !(payload
                 .get("private")
                 .and_then(|v| v.as_bool())
-                .unwrap_or(true);
+                .unwrap_or(false));
             let password = get_option_string(payload, "password");
             Ok(Request::ChatRequest(ChatRequest::Create(
                 CreateChatRequest {

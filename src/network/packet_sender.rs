@@ -172,7 +172,6 @@ impl PacketSender {
     }
 
     fn process_queue(&mut self) {
-        trace!(target: &self.log_target, "Processing packet queues, retaining acked packets");
         // drop packets that are not acked after MAX_RETRIES
         self.ackable_packet_send_queue
             .retain(|queue_item| {
@@ -190,7 +189,6 @@ impl PacketSender {
             .load(std::sync::atomic::Ordering::Relaxed)
         {
             // consume all non-acked packets, by routing them
-            trace!(target: &self.log_target, "Sending standard packets");
             let packet_send_queue = std::mem::take(&mut self.packet_send_queue);
             for packet in packet_send_queue.into_iter() {
                 let boxed = Box::new(packet);
@@ -208,7 +206,6 @@ impl PacketSender {
             }
 
             // try to send all ackable packets, but only if they are ready
-            trace!(target: &self.log_target, "Sending ackable packets");
             let mut ackable_packet_send_queue = std::mem::take(&mut self.ackable_packet_send_queue);
             for packet in ackable_packet_send_queue.iter_mut() {
                 if packet.last_send.elapsed() >= PACKET_RESEND_BACK_OFF_TIME {
@@ -232,7 +229,6 @@ impl PacketSender {
         }
 
         // consume all flood packets, even if network discovery is ongoing
-        trace!(target: &self.log_target, "Sending flood packets");
         let flood_packets_queue = std::mem::take(&mut self.flood_packets_queue);
         for packet in flood_packets_queue.into_iter() {
             match packet.packet_type {
@@ -319,7 +315,7 @@ impl PacketSender {
     }
 
     fn route_packet(&self, packet: Box<PacketQueueItem>) -> Result<(), RoutePacketError> {
-        trace!(target: &self.log_target, "Routing packet {:?}", packet.packet_type);
+        debug!(target: &self.log_target, "Routing packet {:?}", packet.packet_type);
         let packet_send = match self.neighbors.lock() {
             Ok(neighbors) => neighbors,
             Err(e) => {
@@ -335,6 +331,7 @@ impl PacketSender {
                 return Err(RoutePacketError::NoRouteFound(packet));
             }
         };
+        debug!(target: &self.log_target, "Found route to peer '{}': {:?}", packet.peer_id, path);
 
         let packet = Packet {
             routing_header: SourceRoutingHeader {
@@ -344,7 +341,10 @@ impl PacketSender {
             session_id: packet.session_id,
             pack_type: packet.packet_type,
         };
-
+        if packet.routing_header.hops.len() <= 1 {
+            error!(target: &self.log_target, "Cannot route packet to itself");
+            return Err(RoutePacketError::SendError);
+        }
         let sender = match packet_send.get(&packet.routing_header.hops[1]) {
             Some(sender) => sender,
             None => {
