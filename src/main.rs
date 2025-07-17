@@ -700,6 +700,12 @@ async fn main() -> anyhow::Result<()> {
         logger: &LOGGER,
     };
 
+    // Get configuration from environment variables
+    let host = std::env::var("HOST").unwrap_or_else(|_| "0.0.0.0".to_string());
+    let port = std::env::var("PORT").unwrap_or_else(|_| "3000".to_string());
+    
+    let bind_address = format!("{}:{}", host, port);
+
     let app = Router::new()
         .route("/api/topology", get(get_topology))
         .route("/api/nodes", get(get_nodes).post(add_node))
@@ -713,11 +719,9 @@ async fn main() -> anyhow::Result<()> {
             get(get_configurations).post(change_configuration),
         )
         .route("/api/logs", get(get_logs))
-        .with_state(app_state)
-        .fallback_service(ServeDir::new("./dist").append_index_html_on_directories(true));
+        .with_state(app_state);
 
-    let listener = TcpListener::bind("0.0.0.0:3000").await.unwrap();
-    info!("Server running on http://0.0.0.0:3000");
+    let listener = TcpListener::bind(&bind_address).await.unwrap();
     axum::serve(listener, app).await.unwrap();
     Ok(())
 }
