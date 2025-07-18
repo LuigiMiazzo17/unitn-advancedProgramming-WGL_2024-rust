@@ -1,16 +1,17 @@
-use axum::http::StatusCode;
+use axum::http::{HeaderValue, StatusCode};
 use axum::{
     extract::{Path, State, rejection::JsonRejection},
     response::{IntoResponse, Json},
     routing::{Router, get, patch, post},
 };
+
 use log::{Level, debug, error, info, trace, warn};
 use serde_json::{Value, json};
 use std::collections::HashSet;
 use std::fs;
 use std::sync::{Arc, Mutex};
+use tower_http::cors::{Any, CorsLayer};
 use tokio::net::TcpListener;
-use tower_http::services::ServeDir;
 use unitn_advancedProgramming_WGL_2024_rust::network::message::{
     ChatId, ChatRequest, ContentRequest, CreateChatRequest, Request,
 };
@@ -706,6 +707,9 @@ async fn main() -> anyhow::Result<()> {
     
     let bind_address = format!("{}:{}", host, port);
 
+    let cors = CorsLayer::new()
+        .allow_origin(Any);
+
     let app = Router::new()
         .route("/api/topology", get(get_topology))
         .route("/api/nodes", get(get_nodes).post(add_node))
@@ -719,6 +723,7 @@ async fn main() -> anyhow::Result<()> {
             get(get_configurations).post(change_configuration),
         )
         .route("/api/logs", get(get_logs))
+        .layer(cors)
         .with_state(app_state);
 
     let listener = TcpListener::bind(&bind_address).await.unwrap();
