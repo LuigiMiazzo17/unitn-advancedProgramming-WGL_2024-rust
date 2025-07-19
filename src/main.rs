@@ -700,12 +700,8 @@ async fn main() -> anyhow::Result<()> {
         simulation_controller: Arc::new(Mutex::new(simulation_controller)),
         logger: &LOGGER,
     };
-
-    // Get configuration from environment variables
-    let host = std::env::var("HOST").unwrap_or_else(|_| "0.0.0.0".to_string());
-    let port = std::env::var("PORT").unwrap_or_else(|_| "3000".to_string());
     
-    let bind_address = format!("https://unitn-advancedprogramming-wgl-2024-rust.onrender.com:3000");
+    let bind_address = "0.0.0.0:3000".to_string();
 
     let cors = CorsLayer::new()
         .allow_origin(Any);
