@@ -1,4 +1,4 @@
-use axum::http::{HeaderValue, StatusCode};
+use axum::http::{StatusCode};
 use axum::{
     extract::{Path, State, rejection::JsonRejection},
     response::{IntoResponse, Json},
@@ -704,7 +704,9 @@ async fn main() -> anyhow::Result<()> {
     let bind_address = "0.0.0.0:3000".to_string();
 
     let cors = CorsLayer::new()
-        .allow_origin(Any);
+        .allow_origin(Any)
+        .allow_methods(Any)
+        .allow_headers(Any);
 
     let app = Router::new()
         .route("/api/topology", get(get_topology))
