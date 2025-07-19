@@ -705,7 +705,7 @@ async fn main() -> anyhow::Result<()> {
     let host = std::env::var("HOST").unwrap_or_else(|_| "0.0.0.0".to_string());
     let port = std::env::var("PORT").unwrap_or_else(|_| "3000".to_string());
     
-    let bind_address = format!("{}:{}", host, port);
+    let bind_address = format!("https://unitn-advancedprogramming-wgl-2024-rust.onrender.com:3000");
 
     let cors = CorsLayer::new()
         .allow_origin(Any);
